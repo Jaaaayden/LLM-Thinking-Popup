@@ -10,6 +10,41 @@ class OverlayManager {
     this.currentMoveIndex = 0;
     this.isPlayerTurn = false;
     this.isTrainingMode = false;
+    this.audioEnabled = true;
+    this.sounds = {};
+    this.videoMuted = true;
+  }
+
+  async loadSounds() {
+    try {
+      this.sounds.move = new Audio(chrome.runtime.getURL('assets/move-sound.mp3'));
+      this.sounds.success = new Audio(chrome.runtime.getURL('assets/success-sound.mp3'));
+      this.sounds.error = new Audio(chrome.runtime.getURL('assets/error-sound.mp3'));
+      
+      // Preload sounds
+      Object.values(this.sounds).forEach(sound => {
+        sound.load();
+        sound.volume = 0.5;
+      });
+    } catch (e) {
+      console.log('Audio not available:', e);
+      this.audioEnabled = false;
+    }
+  }
+
+  playSound(soundName) {
+    if (!this.audioEnabled || !this.sounds[soundName]) return;
+    
+    try {
+      const sound = this.sounds[soundName];
+      sound.currentTime = 0;
+      sound.play().catch(e => {
+        // Audio play failed (common if user hasn't interacted yet)
+        console.log('Sound play blocked:', e);
+      });
+    } catch (e) {
+      console.log('Error playing sound:', e);
+    }
   }
 
   show(type) {
@@ -27,6 +62,9 @@ class OverlayManager {
     // Inject our specific styles directly into the document head
     // ensuring they are available globally for the board logic
     this.injectStyles();
+
+    // Load sounds when showing
+    this.loadSounds();
 
     if (type === 'chess') this.renderChess();
     else if (type === 'video') this.renderVideo();
@@ -64,7 +102,6 @@ class OverlayManager {
   }
 
   injectStyles() {
-    // We check if styles exist to avoid duplicates
     if (document.getElementById('braintease-styles')) return;
 
     const style = document.createElement('style');
@@ -114,6 +151,11 @@ class OverlayManager {
         font-size: 14px;
         font-weight: 600;
         z-index: 10002;
+        transition: background 0.2s;
+      }
+      
+      #braintease-overlay .bt-close-btn:hover {
+        background: #ff6666;
       }
       
       #braintease-overlay .bt-title {
@@ -129,7 +171,6 @@ class OverlayManager {
         box-shadow: 0 10px 40px rgba(0,0,0,0.5);
       }
       
-      /* THIS ID IS CRITICAL FOR JQUERY TO FIND */
       #bt-chessboard {
         width: 400px;
         height: 400px;
@@ -144,10 +185,55 @@ class OverlayManager {
       #braintease-overlay .bt-status.success { color: #4CAF50; }
       #braintease-overlay .bt-status.error { color: #ff6b6b; }
 
-      /* HIDE GLOBAL ARTIFACTS: 
-         This hides the "leaked" pieces at the bottom of the screen 
-         that aren't inside our overlay 
-      */
+      /* Audio toggle button */
+      #braintease-overlay .bt-audio-btn {
+        position: absolute;
+        top: 20px;
+        left: 20px;
+        padding: 10px 15px;
+        background: rgba(255,255,255,0.1);
+        color: white;
+        border: 1px solid rgba(255,255,255,0.3);
+        border-radius: 8px;
+        cursor: pointer;
+        font-size: 14px;
+        z-index: 10002;
+        transition: all 0.2s;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+      }
+      
+      #braintease-overlay .bt-audio-btn:hover {
+        background: rgba(255,255,255,0.2);
+      }
+      
+      #braintease-overlay .bt-audio-btn.muted {
+        opacity: 0.6;
+      }
+
+      /* Video audio controls */
+      #braintease-overlay .bt-video-controls {
+        display: flex;
+        gap: 10px;
+        margin-top: 10px;
+      }
+      
+      #braintease-overlay .bt-video-btn {
+        padding: 8px 16px;
+        background: rgba(255,255,255,0.1);
+        color: white;
+        border: 1px solid rgba(255,255,255,0.3);
+        border-radius: 6px;
+        cursor: pointer;
+        font-size: 13px;
+        transition: all 0.2s;
+      }
+      
+      #braintease-overlay .bt-video-btn:hover {
+        background: rgba(255,255,255,0.2);
+      }
+
       body > .chessboard-2173d,
       body > .board-b72b1,
       body > img.piece-417db {
@@ -164,6 +250,18 @@ class OverlayManager {
     if (style) style.remove();
   }
 
+  addAudioToggle(container) {
+    const audioBtn = document.createElement('button');
+    audioBtn.className = 'bt-audio-btn';
+    audioBtn.innerHTML = '🔊 Sound On';
+    audioBtn.onclick = () => {
+      this.audioEnabled = !this.audioEnabled;
+      audioBtn.innerHTML = this.audioEnabled ? '🔊 Sound On' : '🔇 Sound Off';
+      audioBtn.classList.toggle('muted', !this.audioEnabled);
+    };
+    container.appendChild(audioBtn);
+  }
+
   async renderChess() {
     const container = document.createElement('div');
     container.className = 'bt-container';
@@ -175,6 +273,8 @@ class OverlayManager {
     title.className = 'bt-title';
     title.textContent = 'Solve a puzzle while the AI thinks...';
     container.appendChild(title);
+
+    this.addAudioToggle(container);
 
     const puzzleData = await this.getDailyPuzzleInfo();
     
@@ -434,6 +534,7 @@ class OverlayManager {
     const playedMove = source + target;
     
     if (playedMove === expectedMove) {
+      this.playSound('move');
       this.currentMoveIndex++;
       this.showStatus('Good move!', 'success');
       if (this.currentMoveIndex >= this.puzzleSolution.length) {
@@ -443,6 +544,7 @@ class OverlayManager {
       this.isPlayerTurn = false;
       setTimeout(() => this.makeOpponentMove(), 600);
     } else {
+      this.playSound('error');
       this.game.undo();
       this.showStatus('Try again!', 'error');
       return 'snapback';
@@ -478,6 +580,7 @@ class OverlayManager {
   }
 
   async onPuzzleSolved() {
+    this.playSound('success');
     this.showStatus('Puzzle solved! Great job!', 'success');
     if (!this.isTrainingMode) {
       await this.markPuzzleAsSolved();
@@ -503,13 +606,42 @@ class OverlayManager {
     title.textContent = 'Quick distraction...';
     container.appendChild(title);
 
-    const VIDEOS = ["dQw4w9WgXcQ"];
+    const VIDEOS = ["jNQXAC9IVRw", "9bZkp7q19f0", "dQw4w9WgXcQ"];
     const randomId = VIDEOS[Math.floor(Math.random() * VIDEOS.length)];
     
+    // Create iframe with initial muted state
     const iframe = document.createElement('iframe');
-    iframe.src = `https://www.youtube.com/embed/${randomId}?autoplay=1&controls=0&mute=1`;
-    iframe.style.cssText = "width: 315px; height: 560px; border: none; border-radius: 12px;";
+    iframe.id = 'bt-video-iframe';
+    iframe.src = `https://www.youtube.com/embed/${randomId}?autoplay=1&controls=1&mute=1&enablejsapi=1`;
+    iframe.style.cssText = "width: 560px; height: 315px; border: none; border-radius: 12px;";
+    iframe.allow = "accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture";
     container.appendChild(iframe);
+    
+    // Add audio controls
+    const controlsDiv = document.createElement('div');
+    controlsDiv.className = 'bt-video-controls';
+    
+    const muteBtn = document.createElement('button');
+    muteBtn.className = 'bt-video-btn';
+    muteBtn.innerHTML = '🔇 Unmute Video';
+    muteBtn.onclick = () => {
+      this.videoMuted = !this.videoMuted;
+      // Reload iframe with new mute state
+      iframe.src = `https://www.youtube.com/embed/${randomId}?autoplay=1&controls=1&mute=${this.videoMuted ? 1 : 0}&enablejsapi=1`;
+      muteBtn.innerHTML = this.videoMuted ? '🔇 Unmute Video' : '🔊 Mute Video';
+    };
+    controlsDiv.appendChild(muteBtn);
+    
+    const skipBtn = document.createElement('button');
+    skipBtn.className = 'bt-video-btn';
+    skipBtn.innerHTML = '⏭️ Skip Video';
+    skipBtn.onclick = () => {
+      const newRandomId = VIDEOS[Math.floor(Math.random() * VIDEOS.length)];
+      iframe.src = `https://www.youtube.com/embed/${newRandomId}?autoplay=1&controls=1&mute=${this.videoMuted ? 1 : 0}&enablejsapi=1`;
+    };
+    controlsDiv.appendChild(skipBtn);
+    
+    container.appendChild(controlsDiv);
     
     this.addCloseBtn(container);
   }
