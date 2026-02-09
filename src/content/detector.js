@@ -8,6 +8,7 @@ const SITE_CONFIG = {
     thinkingSelector: '.loading-dots, .generating-text, [data-loading="true"], .response-loading'
   }
 };
+// Uses the stop response/thinking as a way of triggering/removing popup
 
 class StateDetector {
   constructor() {
@@ -19,8 +20,8 @@ class StateDetector {
   }
 
   init() {
-    console.log("[BrainTease] Initializing detector for:", this.site);
-    
+    console.log("Initializing detector for:", this.site);
+
     // Use both MutationObserver and polling for reliability
     this.observer = new MutationObserver(() => this.checkState());
     this.observer.observe(document.body, { 
@@ -35,27 +36,25 @@ class StateDetector {
     
     // Initial check
     this.checkState();
-    console.log("[BrainTease] Watching for AI response...");
+    console.log("Watching for AI response...");
   }
-
+  
   checkState() {
     const config = SITE_CONFIG[this.site];
     
-    // Check for stop button (primary indicator of thinking)
     const stopBtn = document.querySelector(config.stopSelector);
     
-    // Also check for thinking indicators as backup
     const thinkingIndicator = config.thinkingSelector ? 
       document.querySelector(config.thinkingSelector) : null;
     
     const currentlyThinking = !!(stopBtn || thinkingIndicator);
 
     if (currentlyThinking && !this.isThinking) {
-      console.log("[BrainTease] Thinking started!");
+      console.log("Thinking started!");
       this.isThinking = true;
       this.onThinkingStart();
     } else if (!currentlyThinking && this.isThinking) {
-      console.log("[BrainTease] Thinking stopped!");
+      console.log("Thinking stopped!");
       this.isThinking = false;
       if (window.overlayManager) window.overlayManager.hide();
     }
@@ -74,6 +73,8 @@ class StateDetector {
       let playVideo = settings.videoEnabled;
 
       // Handle "First Run" (both undefined)
+      // Sort(a) redundant since already checked in
+      // popup.js but better safe
       if (playChess === undefined && playVideo === undefined) {
         playChess = true; // Default to chess
       }
@@ -87,7 +88,7 @@ class StateDetector {
         }
       }
     } catch (error) {
-      console.error("[BrainTease] Error in onThinkingStart:", error);
+      console.error("Error in onThinkingStart:", error);
     }
   }
 

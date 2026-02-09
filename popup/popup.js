@@ -89,10 +89,10 @@ document.addEventListener('DOMContentLoaded', () => {
       const stored = await chrome.storage.local.get(['solvedPuzzleId', 'solvedPuzzleDate']);
       
       if (stored.solvedPuzzleId === todayPuzzleId && stored.solvedPuzzleDate === today) {
-        puzzleStatus.textContent = "You've solved today's puzzle!";
+        puzzleStatus.textContent = "✓ You've solved today's puzzle!";
         puzzleStatus.className = 'status-text solved';
       } else {
-        puzzleStatus.textContent = "Daily puzzle waiting for you";
+        puzzleStatus.textContent = "○ Daily puzzle waiting for you";
         puzzleStatus.className = 'status-text pending';
       }
     } catch (error) {

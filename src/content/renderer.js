@@ -1,86 +1,110 @@
 class OverlayManager {
   constructor() {
     this.host = null;
-    this.shadow = null;
     this.currentType = null;
     this.currentPuzzleId = null;
     this.dailyPuzzleDate = null;
+    this.board = null;
+    this.game = null;
+    this.puzzleSolution = [];
+    this.currentMoveIndex = 0;
+    this.isPlayerTurn = false;
+    this.isTrainingMode = false;
   }
 
   show(type) {
     if (this.host) {
-      // If already showing same type, don't recreate
       if (this.currentType === type) return;
-      // If showing different type, hide first
       this.hide();
     }
 
     this.currentType = type;
+    
+    // Create the main overlay container
     this.host = document.createElement('div');
     this.host.id = 'braintease-overlay';
-    this.host.style.cssText = `
-      position: fixed; 
-      top: 0; 
-      left: 0; 
-      width: 100vw; 
-      height: 100vh; 
-      z-index: 2147483647; 
-      background: rgba(0,0,0,0.9); 
-      display: flex; 
-      justify-content: center; 
-      align-items: center;
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-    `;
     
-    this.shadow = this.host.attachShadow({ mode: 'open' });
-
-    // Add styles to shadow DOM
-    this.addShadowStyles();
+    // Inject our specific styles directly into the document head
+    // ensuring they are available globally for the board logic
+    this.injectStyles();
 
     if (type === 'chess') this.renderChess();
     else if (type === 'video') this.renderVideo();
 
     document.body.appendChild(this.host);
     
-    // Animate in
+    // Fade in animation
     requestAnimationFrame(() => {
-      this.host.style.opacity = '0';
-      this.host.style.transition = 'opacity 0.3s ease';
-      requestAnimationFrame(() => {
-        this.host.style.opacity = '1';
-      });
+      this.host.classList.add('visible');
     });
   }
 
   hide() {
+    this.cleanupChess();
     if (this.host) {
-      this.host.style.opacity = '0';
+      this.host.classList.remove('visible');
       setTimeout(() => {
         if (this.host) {
           this.host.remove();
           this.host = null;
-          this.shadow = null;
           this.currentType = null;
+          this.removeStyles(); // Cleanup CSS
         }
       }, 300);
     }
   }
 
-  addShadowStyles() {
+  cleanupChess() {
+    this.board = null;
+    this.game = null;
+    this.puzzleSolution = [];
+    this.currentMoveIndex = 0;
+    this.isPlayerTurn = false;
+    this.isTrainingMode = false;
+  }
+
+  injectStyles() {
+    // We check if styles exist to avoid duplicates
+    if (document.getElementById('braintease-styles')) return;
+
     const style = document.createElement('style');
+    style.id = 'braintease-styles';
     style.textContent = `
-      .container {
+      #braintease-overlay {
+        position: fixed; 
+        top: 0; 
+        left: 0; 
+        width: 100vw; 
+        height: 100vh; 
+        z-index: 2147483647; 
+        background: rgba(0,0,0,0.92); 
+        display: flex; 
+        justify-content: center; 
+        align-items: center;
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        opacity: 0;
+        transition: opacity 0.3s ease;
+        pointer-events: auto;
+      }
+
+      #braintease-overlay.visible {
+        opacity: 1;
+      }
+
+      #braintease-overlay .bt-container {
         position: relative;
         display: flex;
         flex-direction: column;
         align-items: center;
         gap: 16px;
+        padding: 60px 20px 20px 20px;
+        background: transparent;
       }
       
-      .close-btn {
+      #braintease-overlay .bt-close-btn {
         position: absolute;
-        top: -50px;
-        right: 0;
+        top: 20px;
+        right: 20px;
         padding: 10px 20px;
         background: #ff4444;
         color: white;
@@ -89,188 +113,375 @@ class OverlayManager {
         cursor: pointer;
         font-size: 14px;
         font-weight: 600;
-        transition: background 0.2s, transform 0.2s;
+        z-index: 10002;
       }
       
-      .close-btn:hover {
-        background: #ff6666;
-        transform: scale(1.05);
-      }
-      
-      .title {
+      #braintease-overlay .bt-title {
         color: white;
         font-size: 18px;
-        margin-bottom: 8px;
-        text-align: center;
+        margin-bottom: 4px;
       }
       
-      .subtitle {
-        color: #888;
-        font-size: 12px;
-        text-align: center;
-        margin-top: -8px;
-        margin-bottom: 8px;
-      }
-      
-      iframe {
+      #braintease-overlay .bt-board-frame {
+        background: #769656;
+        padding: 8px;
+        border-radius: 8px;
         box-shadow: 0 10px 40px rgba(0,0,0,0.5);
       }
       
-      .puzzle-status {
-        color: #4CAF50;
-        font-size: 14px;
-        text-align: center;
-        margin-top: 8px;
+      /* THIS ID IS CRITICAL FOR JQUERY TO FIND */
+      #bt-chessboard {
+        width: 400px;
+        height: 400px;
       }
       
-      .puzzle-link {
-        color: #81b64c;
-        text-decoration: none;
+      #braintease-overlay .bt-status {
+        color: #fff;
         font-size: 14px;
-        margin-top: 8px;
+        min-height: 20px;
       }
       
-      .puzzle-link:hover {
-        text-decoration: underline;
+      #braintease-overlay .bt-status.success { color: #4CAF50; }
+      #braintease-overlay .bt-status.error { color: #ff6b6b; }
+
+      /* HIDE GLOBAL ARTIFACTS: 
+         This hides the "leaked" pieces at the bottom of the screen 
+         that aren't inside our overlay 
+      */
+      body > .chessboard-2173d,
+      body > .board-b72b1,
+      body > img.piece-417db {
+        display: none !important;
+        opacity: 0 !important;
+        pointer-events: none !important;
       }
     `;
-    this.shadow.appendChild(style);
+    document.head.appendChild(style);
+  }
+
+  removeStyles() {
+    const style = document.getElementById('braintease-styles');
+    if (style) style.remove();
   }
 
   async renderChess() {
     const container = document.createElement('div');
-    container.className = 'container';
+    container.className = 'bt-container';
+    
+    // Append container IMMEDIATELY so it exists in DOM
+    this.host.appendChild(container);
 
     const title = document.createElement('div');
-    title.className = 'title';
+    title.className = 'bt-title';
     title.textContent = 'Solve a puzzle while the AI thinks...';
     container.appendChild(title);
 
-    // Check if daily puzzle has already been solved today
     const puzzleData = await this.getDailyPuzzleInfo();
     
     if (puzzleData.alreadySolved) {
-      // User already solved today's puzzle, redirect to training
-      this.renderTrainingPuzzle(container);
+      title.textContent = "You've solved today's puzzle! Here's a training puzzle...";
+      await this.renderTrainingPuzzle(container);
+    } else if (puzzleData.error) {
+      title.textContent = 'Could not load daily puzzle. Loading training puzzle...';
+      await this.renderTrainingPuzzle(container);
     } else {
-      // Show the daily puzzle
-      this.renderDailyPuzzle(container, puzzleData);
+      await this.renderDailyPuzzle(container, puzzleData);
     }
 
-    this.shadow.appendChild(container);
     this.addCloseBtn(container);
   }
 
   async getDailyPuzzleInfo() {
     try {
-      // Fetch the daily puzzle from Lichess API
-      const response = await fetch('https://lichess.org/api/puzzle/daily');
-      if (!response.ok) throw new Error('Failed to fetch daily puzzle');
+      const response = await chrome.runtime.sendMessage({ action: 'FETCH_DAILY_PUZZLE' });
       
-      const data = await response.json();
+      if (!response || !response.success) {
+        throw new Error(response ? response.error : 'Failed to get response from background');
+      }
+
+      const data = response.data;
       const puzzleId = data.puzzle.id;
-      
-      // Get today's date in YYYY-MM-DD format (Lichez resets at midnight UTC)
       const today = new Date().toISOString().split('T')[0];
       
-      // Check if this puzzle has been solved today
       const stored = await chrome.storage.local.get(['solvedPuzzleId', 'solvedPuzzleDate']);
-      
       const alreadySolved = stored.solvedPuzzleId === puzzleId && stored.solvedPuzzleDate === today;
-      
+
+      // Derive FEN from PGN - the Lichess API returns PGN, not FEN
+      const pgn = data.game.pgn;
+      const fen = this.pgnToFen(pgn);
+
       return {
         puzzleId: puzzleId,
         date: today,
-        alreadySolved: alreadySolved,
-        fen: data.game.fen,
-        solution: data.puzzle.solution
+        alreadySolved: alreadySolved, 
+        fen: fen,
+        solution: data.puzzle.solution,
+        initialPly: data.game.ply || 0
       };
     } catch (error) {
       console.error('Error fetching daily puzzle:', error);
-      // Fallback to training puzzle if API fails
-      return { alreadySolved: true };
+      return { error: true, message: error.message };
     }
   }
 
-  renderDailyPuzzle(container, puzzleData) {
+  // Convert PGN moves to FEN position
+  pgnToFen(pgn) {
+    try {
+      const tempGame = new Chess();
+      if (pgn && pgn.trim()) {
+        // PGN from Lichess is space-separated moves like "e4 e5 Nf3 Nc6"
+        const moves = pgn.trim().split(/\s+/);
+        for (const move of moves) {
+          // Skip move numbers and annotations
+          if (move.match(/^\d+\.$/) || move.match(/^\{/) || move.match(/^\[/)) continue;
+          // Try to make the move (handles both SAN and UCI)
+          const result = tempGame.move(move, { sloppy: true });
+          if (!result) {
+            // Try as UCI if SAN fails
+            if (move.length >= 4) {
+              tempGame.move({
+                from: move.substring(0, 2),
+                to: move.substring(2, 4),
+                promotion: move.length > 4 ? move.substring(4, 5) : undefined
+              });
+            }
+          }
+        }
+      }
+      return tempGame.fen();
+    } catch (e) {
+      console.error('Error converting PGN to FEN:', e);
+      return 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
+    }
+  }
+
+  async renderDailyPuzzle(container, puzzleData) {
     this.currentPuzzleId = puzzleData.puzzleId;
     this.dailyPuzzleDate = puzzleData.date;
+    this.puzzleSolution = puzzleData.solution || [];
 
-    const subtitle = document.createElement('div');
-    subtitle.className = 'subtitle';
-    subtitle.textContent = "Today's Daily Puzzle";
-    container.appendChild(subtitle);
-
-    // Create iframe for the daily puzzle using the embed URL
-    const iframe = document.createElement('iframe');
-    iframe.src = `https://lichess.org/training/frame?theme=brown&bg=dark`;
-    iframe.style.cssText = "width: 400px; height: 444px; border: none; border-radius: 8px;";
-    iframe.setAttribute('allow', 'fullscreen');
-    container.appendChild(iframe);
-
-    // Add status message
-    const status = document.createElement('div');
-    status.className = 'puzzle-status';
-    status.id = 'puzzle-status';
-    status.style.display = 'none';
-    container.appendChild(status);
-
-    // Listen for messages from the iframe (lichess sends puzzle completion events)
-    this.setupPuzzleCompletionListener(status);
-
-    // Add link to open on Lichess
-    const link = document.createElement('a');
-    link.className = 'puzzle-link';
-    link.href = `https://lichess.org/training/${puzzleData.puzzleId}`;
-    link.target = '_blank';
-    link.textContent = 'Open on Lichess →';
-    container.appendChild(link);
-  }
-
-  renderTrainingPuzzle(container) {
-    const subtitle = document.createElement('div');
-    subtitle.className = 'subtitle';
-    subtitle.textContent = "You've already solved today's puzzle!";
-    container.appendChild(subtitle);
-
-    // Show random training puzzle instead
-    const iframe = document.createElement('iframe');
-    iframe.src = "https://lichess.org/training/frame?theme=brown&bg=dark&mix=true";
-    iframe.style.cssText = "width: 400px; height: 444px; border: none; border-radius: 8px;";
-    iframe.setAttribute('allow', 'fullscreen');
-    container.appendChild(iframe);
-
-    // Add link to more puzzles
-    const link = document.createElement('a');
-    link.className = 'puzzle-link';
-    link.href = 'https://lichess.org/training';
-    link.target = '_blank';
-    link.textContent = 'More puzzles on Lichess';
-    container.appendChild(link);
-  }
-
-  setupPuzzleCompletionListener(statusElement) {
-    // Listen for messages from the iframe
-    this.puzzleMessageHandler = (event) => {
-      // Check if message is from lichess
-      if (event.origin !== 'https://lichess.org') return;
-      
-      // Handle puzzle completion
-      if (event.data && (event.data.type === 'puzzle-complete' || event.data.solved)) {
-        this.markPuzzleAsSolved();
-        statusElement.textContent = 'Puzzle completed! Great job!';
-        statusElement.style.display = 'block';
-      }
-    };
+    // Frame
+    const boardFrame = document.createElement('div');
+    boardFrame.className = 'bt-board-frame';
     
-    window.addEventListener('message', this.puzzleMessageHandler);
+    // The specific DIV ID jquery looks for
+    const boardDiv = document.createElement('div');
+    boardDiv.id = 'bt-chessboard';
+    boardFrame.appendChild(boardDiv);
+    container.appendChild(boardFrame);
 
-    // Also set up a periodic check to detect puzzle completion via URL/hash changes in iframe
-    // Since Lichess doesn't consistently send postMessage, we also use a fallback timer
-    this.puzzleCheckInterval = setInterval(() => {
-      // Check if puzzle was solved (we can infer this if the user has been interacting)
-      // For now, we'll rely on the storage check on next open
-    }, 5000);
+    // Status
+    const statusDiv = document.createElement('div');
+    statusDiv.className = 'bt-status';
+    statusDiv.id = 'bt-puzzle-status';
+    statusDiv.textContent = 'Find the best move!';
+    container.appendChild(statusDiv);
+
+    this.game = new Chess(puzzleData.fen);
+    
+    // Determine whose turn it is based on the FEN
+    const isWhiteToMove = puzzleData.fen.includes(' w ');
+    this.isPlayerTurn = true; // Player always plays the correct side
+
+    // If the puzzle starts with opponent's move, play it first
+    if (this.puzzleSolution.length > 0 && !isWhiteToMove) {
+      // First move in solution is opponent's move
+      setTimeout(() => this.makeOpponentMove(), 800);
+    }
+
+    const config = {
+      draggable: true,
+      position: this.game.fen(),
+      onDragStart: (source, piece) => this.onDragStart(source, piece),
+      onDrop: (source, target) => this.onDrop(source, target),
+      onSnapEnd: () => this.onSnapEnd(),
+      pieceTheme: (piece) => this.getUnicodePiece(piece),
+      showNotation: true
+    };
+
+    // Initialize using the direct element reference
+    this.board = Chessboard(boardDiv, config);
+  }
+
+  async renderTrainingPuzzle(container) {
+    this.isTrainingMode = true;
+    
+    try {
+      // Fetch a training puzzle from Lichess
+      const response = await chrome.runtime.sendMessage({ action: 'FETCH_TRAINING_PUZZLE' });
+      
+      if (!response || !response.success) {
+        throw new Error('Failed to fetch training puzzle');
+      }
+
+      const data = response.data;
+      const pgn = data.game.pgn;
+      const fen = this.pgnToFen(pgn);
+      this.puzzleSolution = data.puzzle.solution || [];
+      this.currentPuzzleId = data.puzzle.id;
+
+      const boardFrame = document.createElement('div');
+      boardFrame.className = 'bt-board-frame';
+      
+      const boardDiv = document.createElement('div');
+      boardDiv.id = 'bt-chessboard';
+      boardFrame.appendChild(boardDiv);
+      container.appendChild(boardFrame);
+
+      const statusDiv = document.createElement('div');
+      statusDiv.className = 'bt-status';
+      statusDiv.id = 'bt-puzzle-status';
+      statusDiv.textContent = 'Training Puzzle - Find the best move!';
+      container.appendChild(statusDiv);
+
+      this.game = new Chess(fen);
+      
+      // Determine whose turn it is
+      const isWhiteToMove = fen.includes(' w ');
+      this.isPlayerTurn = true;
+
+      // If the puzzle starts with opponent's move, play it first
+      if (this.puzzleSolution.length > 0 && !isWhiteToMove) {
+        setTimeout(() => this.makeOpponentMove(), 800);
+      }
+
+      const config = {
+        draggable: true,
+        position: this.game.fen(),
+        onDragStart: (source, piece) => this.onDragStart(source, piece),
+        onDrop: (source, target) => this.onDrop(source, target),
+        onSnapEnd: () => this.onSnapEnd(),
+        pieceTheme: (piece) => this.getUnicodePiece(piece),
+        showNotation: true
+      };
+
+      this.board = Chessboard(boardDiv, config);
+    } catch (error) {
+      console.error('Error loading training puzzle:', error);
+      // Fallback to free play mode
+      this.renderFreePlayMode(container);
+    }
+  }
+
+  renderFreePlayMode(container) {
+    const boardFrame = document.createElement('div');
+    boardFrame.className = 'bt-board-frame';
+    
+    const boardDiv = document.createElement('div');
+    boardDiv.id = 'bt-chessboard';
+    boardFrame.appendChild(boardDiv);
+    container.appendChild(boardFrame);
+
+    const statusDiv = document.createElement('div');
+    statusDiv.className = 'bt-status';
+    statusDiv.textContent = 'Free Play Mode';
+    container.appendChild(statusDiv);
+
+    this.game = new Chess();
+    const config = {
+      draggable: true,
+      position: 'start',
+      onDragStart: (source, piece) => {
+        if (this.game.game_over()) return false;
+        if (piece.search(/^b/) !== -1) return false;
+        return true;
+      },
+      onDrop: (source, target) => {
+        const move = this.game.move({ from: source, to: target, promotion: 'q' });
+        if (move === null) return 'snapback';
+      },
+      onSnapEnd: () => this.board.position(this.game.fen()),
+      pieceTheme: (piece) => this.getUnicodePiece(piece),
+      showNotation: true
+    };
+
+    this.board = Chessboard(boardDiv, config);
+  }
+
+  // This tricks chessboard.js into rendering pieces without external images
+  getUnicodePiece(piece) {
+    const pieces = {
+      'wK': '♔', 'wQ': '♕', 'wR': '♖', 'wB': '♗', 'wN': '♘', 'wP': '♙',
+      'bK': '♚', 'bQ': '♛', 'bR': '♜', 'bB': '♝', 'bN': '♞', 'bP': '♟'
+    };
+    const isWhite = piece.charAt(0) === 'w';
+    const fill = isWhite ? '#ffffff' : '#000000';
+    const stroke = isWhite ? '#000000' : '#ffffff';
+    
+    const svg = `
+      <svg xmlns="http://www.w3.org/2000/svg" width="45" height="45" viewBox="0 0 45 45">
+        <style>.text{font-size:38px;font-family:serif;fill:${fill};stroke:${stroke};stroke-width:1.5px;}</style>
+        <text x="50%" y="85%" text-anchor="middle" class="text">${pieces[piece]}</text>
+      </svg>`;
+      
+    return 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
+  }
+
+  onDragStart(source, piece) {
+    if (this.game.game_over()) return false;
+    const turn = this.game.turn();
+    if ((turn === 'w' && piece.search(/^b/) !== -1) ||
+        (turn === 'b' && piece.search(/^w/) !== -1)) return false;
+    if (!this.isPlayerTurn) return false;
+    return true;
+  }
+
+  onDrop(source, target) {
+    const move = this.game.move({ from: source, to: target, promotion: 'q' });
+    if (move === null) return 'snapback';
+
+    const expectedMove = this.puzzleSolution[this.currentMoveIndex];
+    const playedMove = source + target;
+    
+    if (playedMove === expectedMove) {
+      this.currentMoveIndex++;
+      this.showStatus('Good move!', 'success');
+      if (this.currentMoveIndex >= this.puzzleSolution.length) {
+        this.onPuzzleSolved();
+        return;
+      }
+      this.isPlayerTurn = false;
+      setTimeout(() => this.makeOpponentMove(), 600);
+    } else {
+      this.game.undo();
+      this.showStatus('Try again!', 'error');
+      return 'snapback';
+    }
+  }
+
+  onSnapEnd() {
+    this.board.position(this.game.fen());
+  }
+
+  makeOpponentMove() {
+    if (this.currentMoveIndex >= this.puzzleSolution.length) return;
+    const opponentMove = this.puzzleSolution[this.currentMoveIndex];
+    const from = opponentMove.substring(0, 2);
+    const to = opponentMove.substring(2, 4);
+    
+    this.game.move({ from, to, promotion: 'q' });
+    this.board.position(this.game.fen());
+    this.currentMoveIndex++;
+    this.isPlayerTurn = true;
+    
+    if (this.currentMoveIndex >= this.puzzleSolution.length) {
+      this.onPuzzleSolved();
+    }
+  }
+
+  showStatus(message, type) {
+    const statusEl = document.getElementById('bt-puzzle-status');
+    if (statusEl) {
+      statusEl.textContent = message;
+      statusEl.className = 'bt-status ' + (type || '');
+    }
+  }
+
+  async onPuzzleSolved() {
+    this.showStatus('Puzzle solved! Great job!', 'success');
+    if (!this.isTrainingMode) {
+      await this.markPuzzleAsSolved();
+    }
   }
 
   async markPuzzleAsSolved() {
@@ -279,77 +490,37 @@ class OverlayManager {
         solvedPuzzleId: this.currentPuzzleId,
         solvedPuzzleDate: this.dailyPuzzleDate
       });
-      console.log('Daily puzzle marked as solved:', this.currentPuzzleId);
     }
   }
 
   renderVideo() {
     const container = document.createElement('div');
-    container.className = 'container';
+    container.className = 'bt-container';
+    this.host.appendChild(container);
 
     const title = document.createElement('div');
-    title.className = 'title';
-    title.textContent = 'Quick distraction while you wait...';
+    title.className = 'bt-title';
+    title.textContent = 'Quick distraction...';
     container.appendChild(title);
 
-    // Working YouTube Shorts IDs
-    const VIDEOS = [
-      "jNQXAC9IVRw", // Me at the zoo (classic, always works)
-      "9bZkp7q19f0", // Gangnam Style
-      "dQw4w9WgXcQ", // Never Gonna Give You Up
-      "kJQP7kiw5Fk", // Despacito
-      "RgKAFK5djSk", // See You Again
-      "OPf0YbXqDm0", // Uptown Funk
-      "60ItHLz5WEA", // Alan Walker - Faded
-      "JGwWNGJdvx8", // Ed Sheeran - Shape of You
-    ];
+    const VIDEOS = ["dQw4w9WgXcQ"];
     const randomId = VIDEOS[Math.floor(Math.random() * VIDEOS.length)];
     
     const iframe = document.createElement('iframe');
-    iframe.src = `https://www.youtube.com/embed/${randomId}?autoplay=1&controls=0&mute=1&loop=1&playlist=${randomId}`;
+    iframe.src = `https://www.youtube.com/embed/${randomId}?autoplay=1&controls=0&mute=1`;
     iframe.style.cssText = "width: 315px; height: 560px; border: none; border-radius: 12px;";
-    iframe.setAttribute('allow', 'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture');
-    iframe.setAttribute('allowfullscreen', '');
     container.appendChild(iframe);
-
-    this.shadow.appendChild(container);
+    
     this.addCloseBtn(container);
   }
 
   addCloseBtn(container) {
     const btn = document.createElement('button');
-    btn.className = 'close-btn';
+    btn.className = 'bt-close-btn';
     btn.innerText = "✕ Close";
     btn.onclick = () => this.hide();
     container.appendChild(btn);
   }
-
-  hide() {
-    // Clean up message listener and interval
-    if (this.puzzleMessageHandler) {
-      window.removeEventListener('message', this.puzzleMessageHandler);
-      this.puzzleMessageHandler = null;
-    }
-    if (this.puzzleCheckInterval) {
-      clearInterval(this.puzzleCheckInterval);
-      this.puzzleCheckInterval = null;
-    }
-
-    if (this.host) {
-      this.host.style.opacity = '0';
-      setTimeout(() => {
-        if (this.host) {
-          this.host.remove();
-          this.host = null;
-          this.shadow = null;
-          this.currentType = null;
-          this.currentPuzzleId = null;
-          this.dailyPuzzleDate = null;
-        }
-      }, 300);
-    }
-  }
 }
 
-// Expose it globally so detector.js can use it
 window.overlayManager = new OverlayManager();
