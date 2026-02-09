@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>BrainTease Settings</title>
+  <link rel="stylesheet" href="popup.css">
+<base target="_blank">
+<base target="_blank">
+</head>
+<body>
+  <h2>BrainTease</h2>
+  <p class="subtitle">Choose your distraction</p>
+
+  <div class="setting-row">
+    <span class="setting-label">♟️ Chess Puzzle</span>
+    <label class="switch">
+      <input type="checkbox" id="chessToggle">
+      <span class="slider"></span>
+    </label>
+  </div>
+
+  <div class="setting-row">
+    <span class="setting-label">🎬 Shorts</span>
+    <label class="switch">
+      <input type="checkbox" id="videoToggle">
+      <span class="slider"></span>
+    </label>
+  </div>
+
+  <div class="divider"></div>
+
+  <div class="puzzle-status-section">
+    <p class="status-label">Daily Puzzle Status</p>
+    <p id="puzzleStatus" class="status-text">Loading...</p>
+    <button id="resetPuzzleBtn" class="reset-btn">Reset Daily Progress</button>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>
