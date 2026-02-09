@@ -6,4 +6,9 @@ scuffed but usable
 
 next steps:
 
-audio in the embed & nicer chess pieces/move response times
+audio in the embed 
+
+nicer chess pieces/move response times
+
+continuous puzzles (puzzle rush? average time taken? global stats/daily streak?)
+
