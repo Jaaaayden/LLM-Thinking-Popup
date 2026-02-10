@@ -4,13 +4,19 @@
 
 2/9/26 -
 chessboard.js/chess.min.js/jquery.min.js integration successful
+
 just needed to convert UCI notation from lichess API to PGN :D
+
 thanks to the wonderful people below for making such an easy-to-use standalone board!
+
 https://github.com/serbanghita/jQuery-Chess
+
 https://github.com/oakmac/chessboardjs
 
 # next steps:
 
 get on chrome web store :pray:
+
 make sure stats persist/no weird behavior in puzzles
-actually have cool videos to watch in the embed
+
+actually have cool videos to watch in the embed otherwise people will just scroll on their phone and get distracted :C
