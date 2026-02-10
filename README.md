@@ -5,6 +5,8 @@
 2/9/26 -
 chessboard.js/chess.min.js/jquery.min.js integration successful
 
+average time is broken 
+
 just needed to convert UCI notation from lichess API to PGN :D
 
 thanks to the wonderful people below for making such an easy-to-use standalone board!
@@ -19,4 +21,4 @@ get on chrome web store :pray:
 
 make sure stats persist/no weird behavior in puzzles
 
-actually have cool videos to watch in the embed otherwise people will just scroll on their phone and get distracted :C
+have cool videos to watch in the embed otherwise people will just scroll on their phone and get distracted :C
