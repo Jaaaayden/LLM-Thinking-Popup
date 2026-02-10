@@ -1,3 +1,5 @@
+// very long class -- will refactor in near future (surely)
+
 class OverlayManager {
   constructor() {
     this.host = null;
@@ -13,13 +15,32 @@ class OverlayManager {
     this.audioEnabled = true;
     this.sounds = {};
     this.videoMuted = true;
+
+    this.sessionPuzzles = [];
+    this.sessionStartTime = null;
+    this.puzzleStartTime = null;
+    this.currentPuzzleIndex = 0;
+    this.puzzleQueue = [];
+    this.userManuallyNavigated = false; 
+    // no longer have automatic navigation since one puzzle processing at a time
+    this.hintsUsed = new Set();
+    this.solvedPuzzleIds = new Set(); // Track solved puzzles by ID, not index
   }
 
   async loadSounds() {
     try {
-      this.sounds.move = new Audio(chrome.runtime.getURL('assets/move-sound.mp3'));
+      // Core sounds
       this.sounds.success = new Audio(chrome.runtime.getURL('assets/success-sound.mp3'));
       this.sounds.error = new Audio(chrome.runtime.getURL('assets/error-sound.mp3'));
+      
+      // Move-specific sounds
+      this.sounds.moveSelf = new Audio(chrome.runtime.getURL('assets/move-self.mp3'));
+      this.sounds.moveOpponent = new Audio(chrome.runtime.getURL('assets/move-opponent.mp3'));
+      this.sounds.capture = new Audio(chrome.runtime.getURL('assets/capture.mp3'));
+      this.sounds.castle = new Audio(chrome.runtime.getURL('assets/castle.mp3'));
+      this.sounds.promote = new Audio(chrome.runtime.getURL('assets/promote.mp3'));
+      this.sounds.moveCheck = new Audio(chrome.runtime.getURL('assets/move-check.mp3'));
+      this.sounds.illegal = new Audio(chrome.runtime.getURL('assets/illegal.mp3'));
       
       // Preload sounds
       Object.values(this.sounds).forEach(sound => {
@@ -39,13 +60,42 @@ class OverlayManager {
       const sound = this.sounds[soundName];
       sound.currentTime = 0;
       sound.play().catch(e => {
-        // Audio play failed (common if user hasn't interacted yet)
         console.log('Sound play blocked:', e);
       });
     } catch (e) {
       console.log('Error playing sound:', e);
     }
   }
+
+  
+  playMoveSound(move, isOpponent = false) {
+    if (!this.audioEnabled) return;
+    
+    // Determine which sound to play based on move type
+    let soundName = isOpponent ? "moveOpponent" : "moveSelf";
+    
+    if (move) {
+      if (move.captured) {
+        soundName = "capture";
+      } else if (move.flags && move.flags.includes("k")) {
+        // Kingside castling
+        soundName = "castle";
+      } else if (move.flags && move.flags.includes("q")) {
+        // Queenside castling
+        soundName = "castle";
+      } else if (move.promotion) {
+        soundName = "promote";
+      }
+    }
+    
+    this.playSound(soundName);
+  }
+
+  playCheckSound() {
+    if (!this.audioEnabled) return;
+    this.playSound("moveCheck");
+  }
+
 
   show(type) {
     if (this.host) {
@@ -78,6 +128,7 @@ class OverlayManager {
   }
 
   hide() {
+    this.saveSessionStats();
     this.cleanupChess();
     if (this.host) {
       this.host.classList.remove('visible');
@@ -92,6 +143,36 @@ class OverlayManager {
     }
   }
 
+  async saveSessionStats() {
+    if (this.sessionPuzzles.length === 0) return;
+    
+    const sessionEndTime = Date.now();
+    const totalTime = sessionEndTime - this.sessionStartTime;
+    const avgTime = totalTime / this.sessionPuzzles.length;
+    
+    const stats = await chrome.storage.local.get([
+      'mostPuzzlesInSession',
+      'totalPuzzlesSolved',
+      'totalTimeSpent',
+      'avgTimePerPuzzle'
+    ]);
+    
+    // Update most puzzles in one session
+    const mostPuzzles = Math.max(stats.mostPuzzlesInSession || 0, this.sessionPuzzles.length);
+    
+    // Update running averages
+    const totalPuzzles = (stats.totalPuzzlesSolved || 0) + this.sessionPuzzles.length;
+    const totalTimeSpent = (stats.totalTimeSpent || 0) + totalTime;
+    const newAvgTime = totalTimeSpent / totalPuzzles;
+    
+    await chrome.storage.local.set({
+      mostPuzzlesInSession: mostPuzzles,
+      totalPuzzlesSolved: totalPuzzles,
+      totalTimeSpent: totalTimeSpent,
+      avgTimePerPuzzle: Math.round(newAvgTime)
+    });
+  }
+
   cleanupChess() {
     this.board = null;
     this.game = null;
@@ -101,7 +182,7 @@ class OverlayManager {
     this.isTrainingMode = false;
   }
 
-  injectStyles() {
+   injectStyles() {
     if (document.getElementById('braintease-styles')) return;
 
     const style = document.createElement('style');
@@ -114,7 +195,7 @@ class OverlayManager {
         width: 100vw; 
         height: 100vh; 
         z-index: 2147483647; 
-        background: rgba(0,0,0,0.92); 
+        background: rgba(0,0,0,0.95); 
         display: flex; 
         justify-content: center; 
         align-items: center;
@@ -128,29 +209,97 @@ class OverlayManager {
         opacity: 1;
       }
 
+      #braintease-overlay .bt-main-layout {
+        display: flex;
+        align-items: stretch;
+        gap: 0;
+        height: 90vh;
+        max-width: 95vw;
+      }
+
+      #braintease-overlay .bt-sidebar {
+        width: 60px;
+        background: #2d2d2d;
+        border-radius: 12px 0 0 12px;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        padding: 16px 8px;
+        gap: 8px;
+        overflow-y: auto;
+      }
+
+      #braintease-overlay .bt-sidebar-item {
+        width: 44px;
+        height: 44px;
+        border-radius: 8px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 14px;
+        font-weight: 600;
+        cursor: pointer;
+        transition: all 0.2s;
+        background: #3d3d3d;
+        color: #888;
+        border: 2px solid transparent;
+      }
+
+      #braintease-overlay .bt-sidebar-item:hover {
+        background: #4d4d4d;
+      }
+
+      #braintease-overlay .bt-sidebar-item.current {
+        background: #769656;
+        color: white;
+        border-color: #9bc063;
+      }
+
+      #braintease-overlay .bt-sidebar-item.completed {
+        background: #4CAF50;
+        color: white;
+      }
+
+      #braintease-overlay .bt-sidebar-item.completed::after {
+        content: '✓';
+      }
+
+      #braintease-overlay .bt-content-area {
+        background: #1a1a1a;
+        border-radius: 0 12px 12px 0;
+        padding: 24px 32px;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        min-width: 500px;
+      }
+
       #braintease-overlay .bt-container {
         position: relative;
         display: flex;
         flex-direction: column;
         align-items: center;
         gap: 16px;
-        padding: 60px 20px 20px 20px;
-        background: transparent;
+        flex: 1;
+      }
+      
+      #braintease-overlay .bt-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        width: 100%;
+        margin-bottom: 8px;
       }
       
       #braintease-overlay .bt-close-btn {
-        position: absolute;
-        top: 20px;
-        right: 20px;
-        padding: 10px 20px;
+        padding: 8px 16px;
         background: #ff4444;
         color: white;
         border: none;
         border-radius: 8px;
         cursor: pointer;
-        font-size: 14px;
+        font-size: 13px;
         font-weight: 600;
-        z-index: 10002;
         transition: background 0.2s;
       }
       
@@ -158,10 +307,35 @@ class OverlayManager {
         background: #ff6666;
       }
       
+      #braintease-overlay .bt-audio-btn {
+        padding: 8px 12px;
+        background: rgba(255,255,255,0.1);
+        color: white;
+        border: 1px solid rgba(255,255,255,0.3);
+        border-radius: 8px;
+        cursor: pointer;
+        font-size: 13px;
+        transition: all 0.2s;
+      }
+      
+      #braintease-overlay .bt-audio-btn:hover {
+        background: rgba(255,255,255,0.2);
+      }
+      
+      #braintease-overlay .bt-audio-btn.muted {
+        opacity: 0.6;
+      }
+      
       #braintease-overlay .bt-title {
         color: white;
         font-size: 18px;
         margin-bottom: 4px;
+      }
+
+      #braintease-overlay .bt-puzzle-info {
+        color: #888;
+        font-size: 13px;
+        margin-bottom: 8px;
       }
       
       #braintease-overlay .bt-board-frame {
@@ -185,34 +359,93 @@ class OverlayManager {
       #braintease-overlay .bt-status.success { color: #4CAF50; }
       #braintease-overlay .bt-status.error { color: #ff6b6b; }
 
-      /* Audio toggle button */
-      #braintease-overlay .bt-audio-btn {
-        position: absolute;
-        top: 20px;
-        left: 20px;
-        padding: 10px 15px;
+      #braintease-overlay .bt-hint-btn {
+        padding: 8px 16px;
+        background: rgba(255, 193, 7, 0.2);
+        color: #ffc107;
+        border: 1px solid rgba(255, 193, 7, 0.4);
+        border-radius: 8px;
+        cursor: pointer;
+        font-size: 13px;
+        transition: all 0.2s;
+        margin-top: 8px;
+      }
+
+      #braintease-overlay .bt-hint-btn:hover:not(:disabled) {
+        background: rgba(255, 193, 7, 0.3);
+      }
+
+      #braintease-overlay .bt-hint-btn:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+      }
+
+      #braintease-overlay .bt-hint-highlight {
+        box-shadow: inset 0 0 0 4px #ffc107 !important;
+      }
+
+      #braintease-overlay .bt-navigation {
+        display: flex;
+        gap: 16px;
+        margin-top: 12px;
+        align-items: center;
+      }
+
+      #braintease-overlay .bt-nav-btn {
+        padding: 10px 20px;
         background: rgba(255,255,255,0.1);
         color: white;
-        border: 1px solid rgba(255,255,255,0.3);
+        border: 1px solid rgba(255,255,255,0.2);
         border-radius: 8px;
         cursor: pointer;
         font-size: 14px;
-        z-index: 10002;
         transition: all 0.2s;
         display: flex;
         align-items: center;
         gap: 6px;
       }
-      
-      #braintease-overlay .bt-audio-btn:hover {
+
+      #braintease-overlay .bt-nav-btn:hover:not(:disabled) {
         background: rgba(255,255,255,0.2);
       }
-      
-      #braintease-overlay .bt-audio-btn.muted {
-        opacity: 0.6;
+
+      #braintease-overlay .bt-nav-btn:disabled {
+        opacity: 0.4;
+        cursor: not-allowed;
       }
 
-      /* Video audio controls */
+      #braintease-overlay .bt-puzzle-counter {
+        color: #888;
+        font-size: 14px;
+        min-width: 80px;
+        text-align: center;
+      }
+
+      #braintease-overlay .bt-session-stats {
+        display: flex;
+        gap: 20px;
+        margin-top: 12px;
+        padding: 12px 20px;
+        background: rgba(255,255,255,0.05);
+        border-radius: 8px;
+      }
+
+      #braintease-overlay .bt-stat-item {
+        text-align: center;
+      }
+
+      #braintease-overlay .bt-stat-value {
+        color: #4CAF50;
+        font-size: 18px;
+        font-weight: 600;
+      }
+
+      #braintease-overlay .bt-stat-label {
+        color: #888;
+        font-size: 11px;
+        text-transform: uppercase;
+      }
+
       #braintease-overlay .bt-video-controls {
         display: flex;
         gap: 10px;
@@ -250,78 +483,348 @@ class OverlayManager {
     if (style) style.remove();
   }
 
-  addAudioToggle(container) {
-    const audioBtn = document.createElement('button');
-    audioBtn.className = 'bt-audio-btn';
-    audioBtn.innerHTML = '🔊 Sound On';
-    audioBtn.onclick = () => {
-      this.audioEnabled = !this.audioEnabled;
-      audioBtn.innerHTML = this.audioEnabled ? '🔊 Sound On' : '🔇 Sound Off';
-      audioBtn.classList.toggle('muted', !this.audioEnabled);
-    };
-    container.appendChild(audioBtn);
-  }
-
   async renderChess() {
+    this.sessionStartTime = Date.now();
+    this.sessionPuzzles = [];
+    this.currentPuzzleIndex = 0;
+    this.puzzleQueue = []; 
+    this.userManuallyNavigated = false;
+    this.hintsUsed.clear();
+    this.solvedPuzzleIds.clear();
+    
+    // Pre-load puzzle queue
+    await this.loadPuzzleQueue();
+    
+    const mainLayout = document.createElement('div');
+    mainLayout.className = 'bt-main-layout';
+    // Append container IMMEDIATELY so it exists in DOM
+    this.host.appendChild(mainLayout);
+
+    // Create sidebar
+    this.sidebar = document.createElement('div');
+    this.sidebar.className = 'bt-sidebar';
+    this.sidebar.id = 'bt-sidebar';
+    mainLayout.appendChild(this.sidebar);
+
+    // Create content area
+    const contentArea = document.createElement('div');
+    contentArea.className = 'bt-content-area';
+    mainLayout.appendChild(contentArea);
+
     const container = document.createElement('div');
     container.className = 'bt-container';
-    
-    // Append container IMMEDIATELY so it exists in DOM
-    this.host.appendChild(container);
+    contentArea.appendChild(container);
 
+    // Header with controls
+    const header = document.createElement('div');
+    header.className = 'bt-header';
+    
+    const audioBtn = document.createElement('button');
+    audioBtn.className = 'bt-audio-btn';
+    audioBtn.innerHTML = '🔊 Sound';
+    audioBtn.onclick = () => {
+      this.audioEnabled = !this.audioEnabled;
+      audioBtn.innerHTML = this.audioEnabled ? '🔊 Sound' : '🔇 Sound';
+      audioBtn.classList.toggle('muted', !this.audioEnabled);
+    };
+    header.appendChild(audioBtn);
+    
+    const closeBtn = document.createElement('button');
+    closeBtn.className = 'bt-close-btn';
+    closeBtn.innerText = '✕ Close';
+    closeBtn.onclick = () => this.hide();
+    header.appendChild(closeBtn);
+    
+    container.appendChild(header);
+
+    // Title
     const title = document.createElement('div');
     title.className = 'bt-title';
-    title.textContent = 'Solve a puzzle while the AI thinks...';
+    title.textContent = 'Chess Puzzles';
+    title.id = 'bt-puzzle-title';
     container.appendChild(title);
 
-    this.addAudioToggle(container);
+    // Puzzle info
+    const puzzleInfo = document.createElement('div');
+    puzzleInfo.className = 'bt-puzzle-info';
+    puzzleInfo.id = 'bt-puzzle-info';
+    container.appendChild(puzzleInfo);
 
-    const puzzleData = await this.getDailyPuzzleInfo();
+    // Board container
+    const boardContainer = document.createElement('div');
+    boardContainer.id = 'bt-board-container';
+    container.appendChild(boardContainer);
+
+    // Hint button
+    const hintBtn = document.createElement('button');
+    hintBtn.className = 'bt-hint-btn';
+    hintBtn.id = 'bt-hint-btn';
+    hintBtn.innerHTML = '💡 Hint';
+    hintBtn.onclick = () => this.showHint();
+    container.appendChild(hintBtn);
+
+    // Status
+    const statusDiv = document.createElement('div');
+    statusDiv.className = 'bt-status';
+    statusDiv.id = 'bt-puzzle-status';
+    container.appendChild(statusDiv);
+
+    // Navigation
+    const navDiv = document.createElement('div');
+    navDiv.className = 'bt-navigation';
     
-    if (puzzleData.alreadySolved) {
-      title.textContent = "You've solved today's puzzle! Here's a training puzzle...";
-      await this.renderTrainingPuzzle(container);
-    } else if (puzzleData.error) {
-      title.textContent = 'Could not load daily puzzle. Loading training puzzle...';
-      await this.renderTrainingPuzzle(container);
-    } else {
-      await this.renderDailyPuzzle(container, puzzleData);
-    }
+    const prevBtn = document.createElement('button');
+    prevBtn.className = 'bt-nav-btn';
+    prevBtn.innerHTML = '◀ Prev';
+    prevBtn.id = 'bt-prev-btn';
+    prevBtn.onclick = () => this.goToPuzzle(this.currentPuzzleIndex - 1);
+    navDiv.appendChild(prevBtn);
+    
+    const counter = document.createElement('div');
+    counter.className = 'bt-puzzle-counter';
+    counter.id = 'bt-puzzle-counter';
+    navDiv.appendChild(counter);
+    
+    const nextBtn = document.createElement('button');
+    nextBtn.className = 'bt-nav-btn';
+    nextBtn.innerHTML = 'Next ▶';
+    nextBtn.id = 'bt-next-btn';
+    nextBtn.onclick = () => this.goToPuzzle(this.currentPuzzleIndex + 1);
+    navDiv.appendChild(nextBtn);
+    
+    container.appendChild(navDiv);
 
-    this.addCloseBtn(container);
+    // Session stats
+    const statsDiv = document.createElement('div');
+    statsDiv.className = 'bt-session-stats';
+    statsDiv.id = 'bt-session-stats';
+    container.appendChild(statsDiv);
+
+    this.updateSidebar();
+    this.renderCurrentPuzzle();
   }
 
-  async getDailyPuzzleInfo() {
+  async fetchMorePuzzles(count = 1) {
+    // Show a loading status if we are waiting
+    this.showStatus('Fetching new puzzles...', '');
+    
+    let addedCount = 0;
+    
+    for (let i = 0; i < count; i++) {
+      try {
+        const response = await chrome.runtime.sendMessage({ action: 'FETCH_TRAINING_PUZZLE' });
+        
+        if (response && response.success) {
+          const data = response.data;
+          const fen = this.pgnToFen(data.game.pgn);
+          
+          this.puzzleQueue.push({
+            id: data.puzzle.id,
+            fen: fen,
+            solution: data.puzzle.solution,
+            isDaily: false
+          });
+          addedCount++;
+        }
+      } catch (e) {
+        console.log('Error fetching puzzle:', e);
+      }
+    }
+    
+    // Refresh the sidebar to show the new items
+    if (addedCount > 0) {
+      this.updateSidebar();
+      // Re-evaluate next button state
+      const nextBtn = document.getElementById('bt-next-btn');
+      if (nextBtn) nextBtn.disabled = this.currentPuzzleIndex >= this.puzzleQueue.length - 1;
+    }
+    
+    return addedCount;
+  }
+
+  async loadPuzzleQueue() {
+  // Check if daily puzzle was already solved today
+  let dailySolved = false;
+    try {
+      const stored = await chrome.storage.local.get(['solvedPuzzleId', 'solvedPuzzleDate']);
+      const today = new Date().toISOString().split('T')[0];
+      if (stored.solvedPuzzleDate === today && stored.solvedPuzzleId) {
+        dailySolved = true;
+      }
+    } catch (e) {
+      console.log('Could not check daily puzzle status');
+    }
+
+    // Try to get daily puzzle first (only if not already solved)
+    if (!dailySolved) {
     try {
       const response = await chrome.runtime.sendMessage({ action: 'FETCH_DAILY_PUZZLE' });
-      
-      if (!response || !response.success) {
-        throw new Error(response ? response.error : 'Failed to get response from background');
+      if (response && response.success) {
+        const data = response.data;
+        const pgn = data.game.pgn;
+        const fen = this.pgnToFen(pgn); 
+        // Derive FEN from PGN - the Lichess API returns PGN, not FEN
+        
+        this.puzzleQueue.push({
+          id: data.puzzle.id,
+          fen: fen,
+          solution: data.puzzle.solution,
+          isDaily: true
+        });
       }
-
-      const data = response.data;
-      const puzzleId = data.puzzle.id;
-      const today = new Date().toISOString().split('T')[0];
-      
-      const stored = await chrome.storage.local.get(['solvedPuzzleId', 'solvedPuzzleDate']);
-      const alreadySolved = stored.solvedPuzzleId === puzzleId && stored.solvedPuzzleDate === today;
-
-      // Derive FEN from PGN - the Lichess API returns PGN, not FEN
-      const pgn = data.game.pgn;
-      const fen = this.pgnToFen(pgn);
-
-      return {
-        puzzleId: puzzleId,
-        date: today,
-        alreadySolved: alreadySolved, 
-        fen: fen,
-        solution: data.puzzle.solution,
-        initialPly: data.game.ply || 0
-      };
-    } catch (error) {
-      console.error('Error fetching daily puzzle:', error);
-      return { error: true, message: error.message };
+    } catch (e) {
+      console.log('Could not load daily puzzle');
     }
+    }
+
+    // Load 4 training puzzles (always)
+    // Rate limit being reached -- trying 1 to see if better
+    await this.fetchMorePuzzles(); // Load initial batch
+    
+    // Fallback if no puzzles loaded
+    if (this.puzzleQueue.length === 0) {
+      this.puzzleQueue.push({
+        id: 'fallback',
+        fen: 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1',
+        solution: [],
+        isDaily: false
+      });
+    }
+  }
+
+  updateSidebar() {
+    const sidebar = document.getElementById('bt-sidebar');
+    if (!sidebar) return;
+    
+    sidebar.innerHTML = '';
+    
+    for (let i = 0; i < this.puzzleQueue.length; i++) {
+      const item = document.createElement('div');
+      item.className = 'bt-sidebar-item';
+      item.textContent = i + 1;
+      
+      // Check if this specific puzzle ID has been solved (not just by index)
+      const puzzle = this.puzzleQueue[i];
+      if (puzzle && this.solvedPuzzleIds.has(puzzle.id)) {
+        item.classList.add('completed');
+        item.textContent = '';
+      } else if (i === this.currentPuzzleIndex) {
+        item.classList.add('current');
+      }
+      
+      item.onclick = () => this.goToPuzzle(i);
+      sidebar.appendChild(item);
+    }
+  }
+
+  goToPuzzle(index, isAuto = false) {
+    if (index < 0 || index >= this.puzzleQueue.length) return;
+    if (!isAuto) {
+        this.userManuallyNavigated = true; 
+    }
+    this.currentPuzzleIndex = index;
+    this.updateSidebar();
+    this.renderCurrentPuzzle();
+  }
+
+  renderCurrentPuzzle() {
+    const puzzle = this.puzzleQueue[this.currentPuzzleIndex];
+    if (!puzzle) return;
+
+    this.puzzleStartTime = Date.now();
+    this.currentPuzzleId = puzzle.id;
+    this.puzzleSolution = puzzle.solution || [];
+    this.currentMoveIndex = 0;
+
+    // Update title and info
+    const title = document.getElementById('bt-puzzle-title');
+    const info = document.getElementById('bt-puzzle-info');
+    if (title) title.textContent = puzzle.isDaily ? "Today's Daily Puzzle" : `Puzzle #${this.currentPuzzleIndex + 1}`;
+    if (info) info.textContent = puzzle.isDaily ? 'Solve this one to maintain your streak!' : 'Training puzzle';
+
+    // Update counter
+    const counter = document.getElementById('bt-puzzle-counter');
+    if (counter) counter.textContent = `${this.currentPuzzleIndex + 1} / ${this.puzzleQueue.length}`;
+
+    // Update nav buttons
+    const prevBtn = document.getElementById('bt-prev-btn');
+    const nextBtn = document.getElementById('bt-next-btn');
+    if (prevBtn) prevBtn.disabled = this.currentPuzzleIndex === 0;
+    if (nextBtn) nextBtn.disabled = this.currentPuzzleIndex >= this.puzzleQueue.length - 1;
+
+    // Clear and render board
+    const container = document.getElementById('bt-board-container');
+    if (container) {
+      container.innerHTML = '';
+      
+      const boardFrame = document.createElement('div');
+      boardFrame.className = 'bt-board-frame';
+      
+      const boardDiv = document.createElement('div');
+      boardDiv.id = 'bt-chessboard';
+      boardFrame.appendChild(boardDiv);
+      container.appendChild(boardFrame);
+
+      this.game = new Chess(puzzle.fen);
+      
+      const playerColor = this.game.turn() === 'w' ? 'white' : 'black';
+
+      this.isPlayerTurn = true;
+
+      const config = {
+        draggable: true,
+        position: this.game.fen(),
+        orientation: playerColor,
+        onDragStart: (source, piece) => this.onDragStart(source, piece),
+        onDrop: (source, target) => this.onDrop(source, target),
+        onSnapEnd: () => this.onSnapEnd(),
+        pieceTheme: (piece) => this.getUnicodePiece(piece),
+        showNotation: true
+      };
+
+      this.board = Chessboard(boardDiv, config);
+    }
+
+    // Reset status
+    const status = document.getElementById('bt-puzzle-status');
+    if (status) {
+      status.textContent = 'Find the best move!';
+      status.className = 'bt-status';
+    }
+
+    // Reset hint button
+    const hintBtn = document.getElementById('bt-hint-btn');
+    if (hintBtn) {
+      const puzzle = this.puzzleQueue[this.currentPuzzleIndex];
+      const hintAlreadyUsed = puzzle && this.hintsUsed.has(puzzle.id);
+      hintBtn.disabled = hintAlreadyUsed;
+      hintBtn.innerHTML = hintAlreadyUsed ? '💡 Hint Used' : '💡 Hint';
+    }
+
+    this.updateSessionStats();
+  }
+
+  updateSessionStats() {
+    const statsDiv = document.getElementById('bt-session-stats');
+    if (!statsDiv) return;
+
+    const solvedCount = this.sessionPuzzles.length;
+    const currentTime = this.puzzleStartTime ? Math.round((Date.now() - this.puzzleStartTime) / 1000) : 0;
+    
+    statsDiv.innerHTML = `
+      <div class="bt-stat-item">
+        <div class="bt-stat-value">${solvedCount}</div>
+        <div class="bt-stat-label">Solved</div>
+      </div>
+      <div class="bt-stat-item">
+        <div class="bt-stat-value">${currentTime}s</div>
+        <div class="bt-stat-label">Current</div>
+      </div>
+      <div class="bt-stat-item">
+        <div class="bt-stat-value">${this.sessionPuzzles.length > 0 ? Math.round(this.sessionPuzzles.reduce((a, b) => a + b, 0) / this.sessionPuzzles.length) : 0}s</div>
+        <div class="bt-stat-label">Avg Time</div>
+      </div>
+    `;
   }
 
   // Convert PGN moves to FEN position
@@ -332,12 +835,10 @@ class OverlayManager {
         // PGN from Lichess is space-separated moves like "e4 e5 Nf3 Nc6"
         const moves = pgn.trim().split(/\s+/);
         for (const move of moves) {
-          // Skip move numbers and annotations
           if (move.match(/^\d+\.$/) || move.match(/^\{/) || move.match(/^\[/)) continue;
-          // Try to make the move (handles both SAN and UCI)
+           // Try to make the move (handles both SAN and UCI)
           const result = tempGame.move(move, { sloppy: true });
           if (!result) {
-            // Try as UCI if SAN fails
             if (move.length >= 4) {
               tempGame.move({
                 from: move.substring(0, 2),
@@ -355,150 +856,6 @@ class OverlayManager {
     }
   }
 
-  async renderDailyPuzzle(container, puzzleData) {
-    this.currentPuzzleId = puzzleData.puzzleId;
-    this.dailyPuzzleDate = puzzleData.date;
-    this.puzzleSolution = puzzleData.solution || [];
-
-    // Frame
-    const boardFrame = document.createElement('div');
-    boardFrame.className = 'bt-board-frame';
-    
-    // The specific DIV ID jquery looks for
-    const boardDiv = document.createElement('div');
-    boardDiv.id = 'bt-chessboard';
-    boardFrame.appendChild(boardDiv);
-    container.appendChild(boardFrame);
-
-    // Status
-    const statusDiv = document.createElement('div');
-    statusDiv.className = 'bt-status';
-    statusDiv.id = 'bt-puzzle-status';
-    statusDiv.textContent = 'Find the best move!';
-    container.appendChild(statusDiv);
-
-    this.game = new Chess(puzzleData.fen);
-    
-    // Determine whose turn it is based on the FEN
-    const isWhiteToMove = puzzleData.fen.includes(' w ');
-    this.isPlayerTurn = true; // Player always plays the correct side
-
-    // If the puzzle starts with opponent's move, play it first
-    if (this.puzzleSolution.length > 0 && !isWhiteToMove) {
-      // First move in solution is opponent's move
-      setTimeout(() => this.makeOpponentMove(), 800);
-    }
-
-    const config = {
-      draggable: true,
-      position: this.game.fen(),
-      onDragStart: (source, piece) => this.onDragStart(source, piece),
-      onDrop: (source, target) => this.onDrop(source, target),
-      onSnapEnd: () => this.onSnapEnd(),
-      pieceTheme: (piece) => this.getUnicodePiece(piece),
-      showNotation: true
-    };
-
-    // Initialize using the direct element reference
-    this.board = Chessboard(boardDiv, config);
-  }
-
-  async renderTrainingPuzzle(container) {
-    this.isTrainingMode = true;
-    
-    try {
-      // Fetch a training puzzle from Lichess
-      const response = await chrome.runtime.sendMessage({ action: 'FETCH_TRAINING_PUZZLE' });
-      
-      if (!response || !response.success) {
-        throw new Error('Failed to fetch training puzzle');
-      }
-
-      const data = response.data;
-      const pgn = data.game.pgn;
-      const fen = this.pgnToFen(pgn);
-      this.puzzleSolution = data.puzzle.solution || [];
-      this.currentPuzzleId = data.puzzle.id;
-
-      const boardFrame = document.createElement('div');
-      boardFrame.className = 'bt-board-frame';
-      
-      const boardDiv = document.createElement('div');
-      boardDiv.id = 'bt-chessboard';
-      boardFrame.appendChild(boardDiv);
-      container.appendChild(boardFrame);
-
-      const statusDiv = document.createElement('div');
-      statusDiv.className = 'bt-status';
-      statusDiv.id = 'bt-puzzle-status';
-      statusDiv.textContent = 'Training Puzzle - Find the best move!';
-      container.appendChild(statusDiv);
-
-      this.game = new Chess(fen);
-      
-      // Determine whose turn it is
-      const isWhiteToMove = fen.includes(' w ');
-      this.isPlayerTurn = true;
-
-      // If the puzzle starts with opponent's move, play it first
-      if (this.puzzleSolution.length > 0 && !isWhiteToMove) {
-        setTimeout(() => this.makeOpponentMove(), 800);
-      }
-
-      const config = {
-        draggable: true,
-        position: this.game.fen(),
-        onDragStart: (source, piece) => this.onDragStart(source, piece),
-        onDrop: (source, target) => this.onDrop(source, target),
-        onSnapEnd: () => this.onSnapEnd(),
-        pieceTheme: (piece) => this.getUnicodePiece(piece),
-        showNotation: true
-      };
-
-      this.board = Chessboard(boardDiv, config);
-    } catch (error) {
-      console.error('Error loading training puzzle:', error);
-      // Fallback to free play mode
-      this.renderFreePlayMode(container);
-    }
-  }
-
-  renderFreePlayMode(container) {
-    const boardFrame = document.createElement('div');
-    boardFrame.className = 'bt-board-frame';
-    
-    const boardDiv = document.createElement('div');
-    boardDiv.id = 'bt-chessboard';
-    boardFrame.appendChild(boardDiv);
-    container.appendChild(boardFrame);
-
-    const statusDiv = document.createElement('div');
-    statusDiv.className = 'bt-status';
-    statusDiv.textContent = 'Free Play Mode';
-    container.appendChild(statusDiv);
-
-    this.game = new Chess();
-    const config = {
-      draggable: true,
-      position: 'start',
-      onDragStart: (source, piece) => {
-        if (this.game.game_over()) return false;
-        if (piece.search(/^b/) !== -1) return false;
-        return true;
-      },
-      onDrop: (source, target) => {
-        const move = this.game.move({ from: source, to: target, promotion: 'q' });
-        if (move === null) return 'snapback';
-      },
-      onSnapEnd: () => this.board.position(this.game.fen()),
-      pieceTheme: (piece) => this.getUnicodePiece(piece),
-      showNotation: true
-    };
-
-    this.board = Chessboard(boardDiv, config);
-  }
-
-  // This tricks chessboard.js into rendering pieces without external images
   getUnicodePiece(piece) {
     const pieces = {
       'wK': '♔', 'wQ': '♕', 'wR': '♖', 'wB': '♗', 'wN': '♘', 'wP': '♙',
@@ -528,17 +885,27 @@ class OverlayManager {
 
   onDrop(source, target) {
     const move = this.game.move({ from: source, to: target, promotion: 'q' });
-    if (move === null) return 'snapback';
+    if (move === null) {
+      this.playSound('illegal');
+      return 'snapback';
+    }
 
     const expectedMove = this.puzzleSolution[this.currentMoveIndex];
     const playedMove = source + target;
     
     if (playedMove === expectedMove) {
-      this.playSound('move');
+      // Play appropriate sound based on move type
+      this.playMoveSound(move, false);
+      
+      // Check if this move puts opponent in check
+      if (this.game.in_check()) {
+        setTimeout(() => this.playCheckSound(), 100);
+      }
+      
       this.currentMoveIndex++;
       this.showStatus('Good move!', 'success');
       if (this.currentMoveIndex >= this.puzzleSolution.length) {
-        this.onPuzzleSolved();
+        setTimeout(() => this.onPuzzleSolved(), 300);
         return;
       }
       this.isPlayerTurn = false;
@@ -552,22 +919,29 @@ class OverlayManager {
   }
 
   onSnapEnd() {
-    this.board.position(this.game.fen());
+    if (this.board) this.board.position(this.game.fen());
   }
 
-  makeOpponentMove() {
+ makeOpponentMove() {
     if (this.currentMoveIndex >= this.puzzleSolution.length) return;
     const opponentMove = this.puzzleSolution[this.currentMoveIndex];
     const from = opponentMove.substring(0, 2);
     const to = opponentMove.substring(2, 4);
     
-    this.game.move({ from, to, promotion: 'q' });
+    const move = this.game.move({ from, to, promotion: 'q' });
+    
+    this.playMoveSound(move, true);
+    
+    if (this.game.in_check()) {
+      setTimeout(() => this.playCheckSound(), 100);
+    }
+    
     this.board.position(this.game.fen());
     this.currentMoveIndex++;
     this.isPlayerTurn = true;
     
     if (this.currentMoveIndex >= this.puzzleSolution.length) {
-      this.onPuzzleSolved();
+      setTimeout(() => this.onPuzzleSolved(), 300);
     }
   }
 
@@ -579,21 +953,130 @@ class OverlayManager {
     }
   }
 
-  async onPuzzleSolved() {
-    this.playSound('success');
-    this.showStatus('Puzzle solved! Great job!', 'success');
-    if (!this.isTrainingMode) {
-      await this.markPuzzleAsSolved();
+  showHint() {
+    if (!this.puzzleSolution || this.puzzleSolution.length === 0) return;
+
+    const puzzle = this.puzzleQueue[this.currentPuzzleIndex];
+    if (!puzzle) return;
+
+    // Track that hint was used for this puzzle
+    this.hintsUsed.add(puzzle.id);
+
+    // Get the next expected move
+    const expectedMove = this.puzzleSolution[this.currentMoveIndex];
+    if (!expectedMove) return;
+
+    const from = expectedMove.substring(0, 2);
+    const to = expectedMove.substring(2, 4);
+
+    // Remove any existing highlights first
+    this.clearHintHighlights();
+
+    // Highlight both source and target squares
+    // TODO: Make squares disappear after move rather than replace when another hint is done
+    const squares = document.querySelectorAll('#bt-chessboard .square-55d63');
+    squares.forEach(sq => {
+      const sqAttr = sq.getAttribute('data-square');
+      if (sqAttr === from || sqAttr === to) {
+        sq.classList.add('bt-hint-highlight');
+      }
+    });
+
+    // Show hint message
+    this.showStatus('Hint: Move from ' + from + ' to ' + to, 'success');
+
+    // Update hint button text (but don't disable - allow consecutive hints)
+    const hintBtn = document.getElementById('bt-hint-btn');
+    if (hintBtn) {
+      hintBtn.innerHTML = '💡 Hint Used';
     }
   }
 
+  clearHintHighlights() {
+    const squares = document.querySelectorAll('#bt-chessboard .square-55d63');
+    squares.forEach(sq => {
+      sq.classList.remove('bt-hint-highlight');
+    });
+  }
+
+  async onPuzzleSolved() {
+    this.playSound('success');
+    this.showStatus('Puzzle solved! Great job!', 'success');
+    
+    // Record puzzle completion by ID (for correct sidebar tracking)
+    const puzzle = this.puzzleQueue[this.currentPuzzleIndex];
+    if (puzzle && puzzle.id) {
+      this.solvedPuzzleIds.add(puzzle.id);
+    }
+
+    // Record solve time for stats
+    const solveTime = Date.now() - this.puzzleStartTime;
+    this.sessionPuzzles.push(solveTime);
+    
+    // Update sidebar
+    this.updateSidebar();
+    this.updateSessionStats();
+    
+    // Mark daily puzzle as solved if applicable (puzzle already defined above)
+    if (puzzle && puzzle.isDaily) {
+      await this.markPuzzleAsSolved();
+      await this.updateStreak();
+    }
+
+    // If we are within 2 puzzles of the end, start fetching more in the background
+    if (this.currentPuzzleIndex >= this.puzzleQueue.length - 2) {
+        this.showStatus('Solved! Loading more...', 'success');
+        // This is async but we don't await it strictly, we let it run
+        // so the UI doesn't freeze during the celebration animation
+        this.fetchMorePuzzles(1).catch(console.error);
+        // ADJUSTED to 1 since API wants one request at a time
+    }
+    
+    // Auto-advance to next puzzle after delay (only if user didn't manually navigate)
+    // Not in use since processing requests one by one now
+    const shouldAutoAdvance = !this.userManuallyNavigated;
+    if (this.currentPuzzleIndex < this.puzzleQueue.length - 1 && shouldAutoAdvance) {
+      const nextIndex = this.currentPuzzleIndex + 1;
+      setTimeout(() => {
+        // Use the captured value, not the current flag state
+        if (shouldAutoAdvance) {
+          this.userManuallyNavigated = false; // Reset before navigating
+          this.goToPuzzle(nextIndex, true);
+        }
+      }, 1500);
+    }
+    this.userManuallyNavigated = false;
+  }
+
   async markPuzzleAsSolved() {
-    if (this.currentPuzzleId && this.dailyPuzzleDate) {
+    const puzzle = this.puzzleQueue[this.currentPuzzleIndex];
+    if (puzzle && puzzle.id) {
+      const today = new Date().toISOString().split('T')[0];
       await chrome.storage.local.set({
-        solvedPuzzleId: this.currentPuzzleId,
-        solvedPuzzleDate: this.dailyPuzzleDate
+        solvedPuzzleId: puzzle.id,
+        solvedPuzzleDate: today
       });
     }
+  }
+
+  async updateStreak() {
+    const today = new Date().toISOString().split('T')[0];
+    const yesterday = new Date(Date.now() - 86400000).toISOString().split('T')[0];
+    
+    const stats = await chrome.storage.local.get(['streak', 'lastActiveDate']);
+    let streak = stats.streak || 0;
+    const lastActive = stats.lastActiveDate;
+    
+    if (lastActive === yesterday) {
+      streak++;
+    } else if (lastActive !== today) {
+      streak = 1;
+    }
+    
+    await chrome.storage.local.set({
+      streak: streak,
+      lastActiveDate: today
+    });
   }
 
   renderVideo() {
@@ -609,7 +1092,6 @@ class OverlayManager {
     const VIDEOS = ["jNQXAC9IVRw", "9bZkp7q19f0", "dQw4w9WgXcQ"];
     const randomId = VIDEOS[Math.floor(Math.random() * VIDEOS.length)];
     
-    // Create iframe with initial muted state
     const iframe = document.createElement('iframe');
     iframe.id = 'bt-video-iframe';
     iframe.src = `https://www.youtube.com/embed/${randomId}?autoplay=1&controls=1&mute=1&enablejsapi=1`;
@@ -617,7 +1099,6 @@ class OverlayManager {
     iframe.allow = "accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture";
     container.appendChild(iframe);
     
-    // Add audio controls
     const controlsDiv = document.createElement('div');
     controlsDiv.className = 'bt-video-controls';
     
@@ -626,12 +1107,12 @@ class OverlayManager {
     muteBtn.innerHTML = '🔇 Unmute Video';
     muteBtn.onclick = () => {
       this.videoMuted = !this.videoMuted;
-      // Reload iframe with new mute state
       iframe.src = `https://www.youtube.com/embed/${randomId}?autoplay=1&controls=1&mute=${this.videoMuted ? 1 : 0}&enablejsapi=1`;
       muteBtn.innerHTML = this.videoMuted ? '🔇 Unmute Video' : '🔊 Mute Video';
     };
     controlsDiv.appendChild(muteBtn);
     
+    // Not enough videos so skipping has chance to play same video multiple times
     const skipBtn = document.createElement('button');
     skipBtn.className = 'bt-video-btn';
     skipBtn.innerHTML = '⏭️ Skip Video';
@@ -643,15 +1124,11 @@ class OverlayManager {
     
     container.appendChild(controlsDiv);
     
-    this.addCloseBtn(container);
-  }
-
-  addCloseBtn(container) {
-    const btn = document.createElement('button');
-    btn.className = 'bt-close-btn';
-    btn.innerText = "✕ Close";
-    btn.onclick = () => this.hide();
-    container.appendChild(btn);
+    const closeBtn = document.createElement('button');
+    closeBtn.className = 'bt-close-btn';
+    closeBtn.innerText = '✕ Close';
+    closeBtn.onclick = () => this.hide();
+    container.appendChild(closeBtn);
   }
 }
 

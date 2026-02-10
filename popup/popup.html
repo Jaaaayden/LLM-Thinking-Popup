@@ -6,7 +6,6 @@
   <title>BrainTease Settings</title>
   <link rel="stylesheet" href="popup.css">
 <base target="_blank">
-<base target="_blank">
 </head>
 <body>
   <h2>BrainTease</h2>
@@ -34,6 +33,31 @@
     <p class="status-label">Daily Puzzle Status</p>
     <p id="puzzleStatus" class="status-text">Loading...</p>
     <button id="resetPuzzleBtn" class="reset-btn">Reset Daily Progress</button>
+  </div>
+
+  <div class="divider"></div>
+
+  <div class="stats-section">
+    <p class="stats-label">📊 Your Statistics</p>
+    <div class="stats-grid">
+      <div class="stat-box">
+        <div class="stat-number" id="streakValue">-</div>
+        <div class="stat-desc">Day Streak</div>
+      </div>
+      <div class="stat-box">
+        <div class="stat-number" id="mostPuzzlesValue">-</div>
+        <div class="stat-desc">Best Session</div>
+      </div>
+      <div class="stat-box">
+        <div class="stat-number" id="avgTimeValue">-</div>
+        <div class="stat-desc">Avg Time</div>
+      </div>
+      <div class="stat-box">
+        <div class="stat-number" id="totalPuzzlesValue">-</div>
+        <div class="stat-desc">Total Solved</div>
+      </div>
+    </div>
+    <button id="resetStatsBtn" class="reset-btn stats-reset">Reset All Stats</button>
   </div>
 
   <script src="popup.js"></script>

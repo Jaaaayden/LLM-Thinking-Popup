@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "BrainTease",
-  "version": "1.1",
+  "version": "1.0",
   "description": "A Chrome extension which has you solve puzzles or watch reels while waiting for LLM responses.",
   "permissions": [
     "activeTab",
@@ -13,6 +13,9 @@
     "https://gemini.google.com/*",
     "https://lichess.org/*"
   ],
+  "background": {
+    "service_worker": "src/background/background.js"
+  },
   "action": {
     "default_popup": "popup/popup.html",
     "default_title": "BrainTease",
@@ -31,15 +34,24 @@
         "https://gemini.google.com/*"
       ],
       "js": [
+        "lib/jquery.min.js",
+        "lib/chess.min.js",
+        "lib/chessboard.min.js",
         "src/content/detector.js",
         "src/content/renderer.js"
+      ],
+      "css": [
+        "lib/chessboard.min.css"
       ],
       "run_at": "document_idle"
     }
   ],
   "web_accessible_resources": [
     {
-      "resources": ["assets/*"],
+      "resources": [
+        "assets/*",
+        "lib/*"
+      ],
       "matches": ["https://chatgpt.com/*", "https://gemini.google.com/*"]
     }
   ]

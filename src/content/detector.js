@@ -8,7 +8,6 @@ const SITE_CONFIG = {
     thinkingSelector: '.loading-dots, .generating-text, [data-loading="true"], .response-loading'
   }
 };
-// Uses the stop response/thinking as a way of triggering/removing popup
 
 class StateDetector {
   constructor() {
@@ -17,6 +16,7 @@ class StateDetector {
     this.observer = null;
     this.checkInterval = null;
     this.lastOverlayTime = 0;
+    this.videoWatchedToday = false;
   }
 
   init() {
@@ -42,8 +42,10 @@ class StateDetector {
   checkState() {
     const config = SITE_CONFIG[this.site];
     
+    // Check for stop button (primary indicator of thinking)
     const stopBtn = document.querySelector(config.stopSelector);
     
+    // Also check for thinking indicators as backup
     const thinkingIndicator = config.thinkingSelector ? 
       document.querySelector(config.thinkingSelector) : null;
     
@@ -73,8 +75,6 @@ class StateDetector {
       let playVideo = settings.videoEnabled;
 
       // Handle "First Run" (both undefined)
-      // Sort(a) redundant since already checked in
-      // popup.js but better safe
       if (playChess === undefined && playVideo === undefined) {
         playChess = true; // Default to chess
       }
@@ -85,10 +85,41 @@ class StateDetector {
           window.overlayManager.show('chess');
         } else if (playVideo) {
           window.overlayManager.show('video');
+          // Track video streak
+          this.trackVideoStreak();
         }
       }
     } catch (error) {
       console.error("Error in onThinkingStart:", error);
+    }
+  }
+
+  async trackVideoStreak() {
+    if (this.videoWatchedToday) return;
+    
+    const today = new Date().toISOString().split('T')[0];
+    const yesterday = new Date(Date.now() - 86400000).toISOString().split('T')[0];
+    
+    const stats = await chrome.storage.local.get(['streak', 'lastActiveDate', 'lastVideoDate']);
+    let streak = stats.streak || 0;
+    const lastVideoDate = stats.lastVideoDate;
+    
+    // Only update streak if we haven't already today
+    if (lastVideoDate !== today) {
+      if (lastVideoDate === yesterday) {
+        streak++;
+      } else if (stats.lastActiveDate !== today) {
+        // No activity yesterday, start new streak
+        streak = 1;
+      }
+      
+      await chrome.storage.local.set({
+        streak: streak,
+        lastVideoDate: today,
+        lastActiveDate: today
+      });
+      
+      this.videoWatchedToday = true;
     }
   }
 
