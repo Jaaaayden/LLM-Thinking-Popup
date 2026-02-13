@@ -5,7 +5,6 @@
   "description": "A Chrome extension which has you solve puzzles or watch reels while waiting for LLM responses.",
   "permissions": [
     "activeTab",
-    "scripting",
     "storage"
   ],
   "host_permissions": [

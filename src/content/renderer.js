@@ -1090,7 +1090,7 @@ class OverlayManager {
     container.appendChild(title);
 
     const VIDEOS = ["jNQXAC9IVRw", "9bZkp7q19f0", "dQw4w9WgXcQ"];
-    const randomId = VIDEOS[Math.floor(Math.random() * VIDEOS.length)];
+    let randomId = VIDEOS[Math.floor(Math.random() * VIDEOS.length)];
     
     const iframe = document.createElement('iframe');
     iframe.id = 'bt-video-iframe';
@@ -1117,8 +1117,8 @@ class OverlayManager {
     skipBtn.className = 'bt-video-btn';
     skipBtn.innerHTML = '⏭️ Skip Video';
     skipBtn.onclick = () => {
-      const newRandomId = VIDEOS[Math.floor(Math.random() * VIDEOS.length)];
-      iframe.src = `https://www.youtube.com/embed/${newRandomId}?autoplay=1&controls=1&mute=${this.videoMuted ? 1 : 0}&enablejsapi=1`;
+      randomId = VIDEOS[Math.floor(Math.random() * VIDEOS.length)];
+      iframe.src = `https://www.youtube.com/embed/${randomId}?autoplay=1&controls=1&mute=${this.videoMuted ? 1 : 0}&enablejsapi=1`;
     };
     controlsDiv.appendChild(skipBtn);
     
