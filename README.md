@@ -1,14 +1,24 @@
 # curr issues
 
-lichess embed iframes being funky with strict browser settings so to have moves actually work within the embed i'd probably need to use chessboard.js
+2/8/26 - lichess embed iframes being funky with strict browser settings so to have moves actually work within the embed i'll probably need to use chessboard.js
 
-scuffed but usable 
+2/9/26 -
+chessboard.js/chess.min.js/jquery.min.js integration successful
 
-next steps:
+average time is broken 
 
-audio in the embed 
+just needed to convert UCI notation from lichess API to PGN :D
 
-nicer chess pieces/move response times
+thanks to the wonderful people below for making such an easy-to-use standalone board!
 
-continuous puzzles (puzzle rush? average time taken? global stats/daily streak?)
+https://github.com/serbanghita/jQuery-Chess
 
+https://github.com/oakmac/chessboardjs
+
+# next steps:
+
+get on chrome web store :pray:
+
+make sure stats persist/no weird behavior in puzzles
+
+have cool videos to watch in the embed otherwise people will just scroll on their phone and get distracted :C
