@@ -21,10 +21,11 @@ class OverlayManager {
     this.puzzleStartTime = null;
     this.currentPuzzleIndex = 0;
     this.puzzleQueue = [];
-    this.userManuallyNavigated = false; 
-    // no longer have automatic navigation since one puzzle processing at a time
     this.hintsUsed = new Set();
-    this.solvedPuzzleIds = new Set(); // Track solved puzzles by ID, not index
+    this.solvedPuzzleIds = new Set();
+    this.skippedPuzzleIds = new Set();
+    this.pendingPromotion = null;
+    this.promotionKeyListener = null;
   }
 
   async loadSounds() {
@@ -174,6 +175,12 @@ class OverlayManager {
   }
 
   cleanupChess() {
+    this.hidePromotionPrompt();
+    this.pendingPromotion = null;
+    if (this.board) {
+      try { this.board.destroy(); } catch (e) { /* ignore if already torn down */ }
+      document.querySelectorAll('body > img.piece-417db').forEach(el => el.remove());
+    }
     this.board = null;
     this.game = null;
     this.puzzleSolution = [];
@@ -262,6 +269,15 @@ class OverlayManager {
 
       #braintease-overlay .bt-sidebar-item.completed::after {
         content: '✓';
+      }
+
+      #braintease-overlay .bt-sidebar-item.skipped {
+        background: #b8860b;
+        color: white;
+      }
+
+      #braintease-overlay .bt-sidebar-item.skipped::after {
+        content: '→';
       }
 
       #braintease-overlay .bt-content-area {
@@ -384,41 +400,43 @@ class OverlayManager {
         box-shadow: inset 0 0 0 4px #ffc107 !important;
       }
 
-      #braintease-overlay .bt-navigation {
-        display: flex;
-        gap: 16px;
-        margin-top: 12px;
-        align-items: center;
-      }
-
-      #braintease-overlay .bt-nav-btn {
-        padding: 10px 20px;
-        background: rgba(255,255,255,0.1);
-        color: white;
-        border: 1px solid rgba(255,255,255,0.2);
+      #braintease-overlay .bt-skip-btn {
+        padding: 8px 16px;
+        background: rgba(255, 152, 0, 0.2);
+        color: #ff9800;
+        border: 1px solid rgba(255, 152, 0, 0.4);
         border-radius: 8px;
         cursor: pointer;
-        font-size: 14px;
+        font-size: 13px;
         transition: all 0.2s;
-        display: flex;
-        align-items: center;
-        gap: 6px;
+        margin-top: 8px;
       }
 
-      #braintease-overlay .bt-nav-btn:hover:not(:disabled) {
-        background: rgba(255,255,255,0.2);
+      #braintease-overlay .bt-skip-btn:hover:not(:disabled) {
+        background: rgba(255, 152, 0, 0.3);
       }
 
-      #braintease-overlay .bt-nav-btn:disabled {
-        opacity: 0.4;
+      #braintease-overlay .bt-skip-btn:disabled {
+        opacity: 0.5;
         cursor: not-allowed;
       }
 
-      #braintease-overlay .bt-puzzle-counter {
-        color: #888;
-        font-size: 14px;
-        min-width: 80px;
+      #braintease-overlay .bt-promotion-prompt {
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        background: rgba(0, 0, 0, 0.9);
+        border: 2px solid #ffc107;
+        border-radius: 10px;
+        padding: 16px 24px;
+        color: #ffc107;
+        font-size: 15px;
+        font-weight: 600;
         text-align: center;
+        z-index: 10;
+        pointer-events: none;
+        white-space: nowrap;
       }
 
       #braintease-overlay .bt-session-stats {
@@ -487,10 +505,10 @@ class OverlayManager {
     this.sessionStartTime = Date.now();
     this.sessionPuzzles = [];
     this.currentPuzzleIndex = 0;
-    this.puzzleQueue = []; 
-    this.userManuallyNavigated = false;
+    this.puzzleQueue = [];
     this.hintsUsed.clear();
     this.solvedPuzzleIds.clear();
+    this.skippedPuzzleIds.clear();
     
     // Pre-load puzzle queue
     await this.loadPuzzleQueue();
@@ -563,36 +581,19 @@ class OverlayManager {
     hintBtn.onclick = () => this.showHint();
     container.appendChild(hintBtn);
 
+    // Skip button
+    const skipBtn = document.createElement('button');
+    skipBtn.className = 'bt-skip-btn';
+    skipBtn.id = 'bt-skip-btn';
+    skipBtn.innerHTML = '⏭ Skip';
+    skipBtn.onclick = () => this.onSkipPuzzle();
+    container.appendChild(skipBtn);
+
     // Status
     const statusDiv = document.createElement('div');
     statusDiv.className = 'bt-status';
     statusDiv.id = 'bt-puzzle-status';
     container.appendChild(statusDiv);
-
-    // Navigation
-    const navDiv = document.createElement('div');
-    navDiv.className = 'bt-navigation';
-    
-    const prevBtn = document.createElement('button');
-    prevBtn.className = 'bt-nav-btn';
-    prevBtn.innerHTML = '◀ Prev';
-    prevBtn.id = 'bt-prev-btn';
-    prevBtn.onclick = () => this.goToPuzzle(this.currentPuzzleIndex - 1);
-    navDiv.appendChild(prevBtn);
-    
-    const counter = document.createElement('div');
-    counter.className = 'bt-puzzle-counter';
-    counter.id = 'bt-puzzle-counter';
-    navDiv.appendChild(counter);
-    
-    const nextBtn = document.createElement('button');
-    nextBtn.className = 'bt-nav-btn';
-    nextBtn.innerHTML = 'Next ▶';
-    nextBtn.id = 'bt-next-btn';
-    nextBtn.onclick = () => this.goToPuzzle(this.currentPuzzleIndex + 1);
-    navDiv.appendChild(nextBtn);
-    
-    container.appendChild(navDiv);
 
     // Session stats
     const statsDiv = document.createElement('div');
@@ -631,12 +632,8 @@ class OverlayManager {
       }
     }
     
-    // Refresh the sidebar to show the new items
     if (addedCount > 0) {
       this.updateSidebar();
-      // Re-evaluate next button state
-      const nextBtn = document.getElementById('bt-next-btn');
-      if (nextBtn) nextBtn.disabled = this.currentPuzzleIndex >= this.puzzleQueue.length - 1;
     }
     
     return addedCount;
@@ -679,7 +676,9 @@ class OverlayManager {
 
     // Load 4 training puzzles (always)
     // Rate limit being reached -- trying 1 to see if better
-    await this.fetchMorePuzzles(); // Load initial batch
+    else {
+      await this.fetchMorePuzzles(); // Load initial batch
+    }
     
     // Fallback if no puzzles loaded
     if (this.puzzleQueue.length === 0) {
@@ -703,25 +702,23 @@ class OverlayManager {
       item.className = 'bt-sidebar-item';
       item.textContent = i + 1;
       
-      // Check if this specific puzzle ID has been solved (not just by index)
       const puzzle = this.puzzleQueue[i];
       if (puzzle && this.solvedPuzzleIds.has(puzzle.id)) {
         item.classList.add('completed');
         item.textContent = '';
+      } else if (puzzle && this.skippedPuzzleIds.has(puzzle.id)) {
+        item.classList.add('skipped');
+        item.textContent = '';
       } else if (i === this.currentPuzzleIndex) {
         item.classList.add('current');
       }
-      
-      item.onclick = () => this.goToPuzzle(i);
+
       sidebar.appendChild(item);
     }
   }
 
-  goToPuzzle(index, isAuto = false) {
+  goToPuzzle(index) {
     if (index < 0 || index >= this.puzzleQueue.length) return;
-    if (!isAuto) {
-        this.userManuallyNavigated = true; 
-    }
     this.currentPuzzleIndex = index;
     this.updateSidebar();
     this.renderCurrentPuzzle();
@@ -742,15 +739,6 @@ class OverlayManager {
     if (title) title.textContent = puzzle.isDaily ? "Today's Daily Puzzle" : `Puzzle #${this.currentPuzzleIndex + 1}`;
     if (info) info.textContent = puzzle.isDaily ? 'Solve this one to maintain your streak!' : 'Training puzzle';
 
-    // Update counter
-    const counter = document.getElementById('bt-puzzle-counter');
-    if (counter) counter.textContent = `${this.currentPuzzleIndex + 1} / ${this.puzzleQueue.length}`;
-
-    // Update nav buttons
-    const prevBtn = document.getElementById('bt-prev-btn');
-    const nextBtn = document.getElementById('bt-next-btn');
-    if (prevBtn) prevBtn.disabled = this.currentPuzzleIndex === 0;
-    if (nextBtn) nextBtn.disabled = this.currentPuzzleIndex >= this.puzzleQueue.length - 1;
 
     // Clear and render board
     const container = document.getElementById('bt-board-container');
@@ -800,6 +788,14 @@ class OverlayManager {
       hintBtn.disabled = hintAlreadyUsed;
       hintBtn.innerHTML = hintAlreadyUsed ? '💡 Hint Used' : '💡 Hint';
     }
+
+    // Reset skip button
+    const skipBtn = document.getElementById('bt-skip-btn');
+    if (skipBtn) skipBtn.disabled = false;
+
+    // Clean up any pending promotion from previous puzzle
+    this.hidePromotionPrompt();
+    this.pendingPromotion = null;
 
     this.updateSessionStats();
   }
@@ -884,24 +880,46 @@ class OverlayManager {
   }
 
   onDrop(source, target) {
+    // Detect pawn promotion before executing the move
+    const piece = this.game.get(source);
+    const isPromotion = piece && piece.type === 'p' &&
+      ((piece.color === 'w' && target[1] === '8') ||
+       (piece.color === 'b' && target[1] === '1'));
+
+    if (isPromotion) {
+      // Validate the move is legal using a test promotion
+      const testMove = this.game.move({ from: source, to: target, promotion: 'q' });
+      if (testMove === null) {
+        this.playSound('illegal');
+        return 'snapback';
+      }
+      this.game.undo();
+      // Suspend player input and await keyboard choice
+      this.isPlayerTurn = false;
+      this.pendingPromotion = { source, target };
+      this.showPromotionPrompt();
+      return; // Leave piece visually at target; board.position() called after key press
+    }
+
     const move = this.game.move({ from: source, to: target, promotion: 'q' });
     if (move === null) {
       this.playSound('illegal');
       return 'snapback';
     }
 
+    this.applyCorrectMove(move, source, target);
+  }
+
+  applyCorrectMove(move, source, target, promotionChar = '') {
     const expectedMove = this.puzzleSolution[this.currentMoveIndex];
-    const playedMove = source + target;
-    
+    const playedMove = source + target + promotionChar;
+
     if (playedMove === expectedMove) {
-      // Play appropriate sound based on move type
       this.playMoveSound(move, false);
-      
-      // Check if this move puts opponent in check
       if (this.game.in_check()) {
         setTimeout(() => this.playCheckSound(), 100);
       }
-      
+      this.clearHintHighlights();
       this.currentMoveIndex++;
       this.showStatus('Good move!', 'success');
       if (this.currentMoveIndex >= this.puzzleSolution.length) {
@@ -913,8 +931,9 @@ class OverlayManager {
     } else {
       this.playSound('error');
       this.game.undo();
+      if (this.board) this.board.position(this.game.fen());
       this.showStatus('Try again!', 'error');
-      return 'snapback';
+      this.isPlayerTurn = true;
     }
   }
 
@@ -922,13 +941,69 @@ class OverlayManager {
     if (this.board) this.board.position(this.game.fen());
   }
 
+  showPromotionPrompt() {
+    this.showStatus('Promote pawn — press Q, R, B, or K (knight)', '');
+    const boardContainer = document.getElementById('bt-board-container');
+    if (boardContainer) {
+      const prompt = document.createElement('div');
+      prompt.id = 'bt-promotion-prompt';
+      prompt.className = 'bt-promotion-prompt';
+      prompt.textContent = 'Q = Queen  ·  R = Rook  ·  B = Bishop  ·  K = Knight';
+      boardContainer.style.position = 'relative';
+      boardContainer.appendChild(prompt);
+    }
+    this.promotionKeyListener = (e) => {
+      const key = e.key.toLowerCase();
+      if (key === 'q') this.completePromotion('q');
+      else if (key === 'r') this.completePromotion('r');
+      else if (key === 'b') this.completePromotion('b');
+      else if (key === 'k') this.completePromotion('n');
+      else if (key === 'escape') this.cancelPromotion();
+    };
+    document.addEventListener('keydown', this.promotionKeyListener);
+  }
+
+  hidePromotionPrompt() {
+    const prompt = document.getElementById('bt-promotion-prompt');
+    if (prompt) prompt.remove();
+    if (this.promotionKeyListener) {
+      document.removeEventListener('keydown', this.promotionKeyListener);
+      this.promotionKeyListener = null;
+    }
+  }
+
+  cancelPromotion() {
+    this.pendingPromotion = null;
+    this.hidePromotionPrompt();
+    if (this.board && this.game) this.board.position(this.game.fen());
+    this.isPlayerTurn = true;
+    this.showStatus('Move cancelled', 'error');
+  }
+
+  completePromotion(pieceChar) {
+    if (!this.pendingPromotion) return;
+    const { source, target } = this.pendingPromotion;
+    this.pendingPromotion = null;
+    this.hidePromotionPrompt();
+
+    const move = this.game.move({ from: source, to: target, promotion: pieceChar });
+    if (!move) {
+      if (this.board) this.board.position(this.game.fen());
+      this.isPlayerTurn = true;
+      return;
+    }
+    if (this.board) this.board.position(this.game.fen());
+    this.applyCorrectMove(move, source, target, pieceChar);
+  }
+
  makeOpponentMove() {
     if (this.currentMoveIndex >= this.puzzleSolution.length) return;
     const opponentMove = this.puzzleSolution[this.currentMoveIndex];
     const from = opponentMove.substring(0, 2);
     const to = opponentMove.substring(2, 4);
-    
-    const move = this.game.move({ from, to, promotion: 'q' });
+    const promotion = opponentMove.length > 4 ? opponentMove[4] : 'q';
+
+    const move = this.game.move({ from, to, promotion });
     
     this.playMoveSound(move, true);
     
@@ -973,7 +1048,6 @@ class OverlayManager {
     this.clearHintHighlights();
 
     // Highlight both source and target squares
-    // TODO: Make squares disappear after move rather than replace when another hint is done
     const squares = document.querySelectorAll('#bt-chessboard .square-55d63');
     squares.forEach(sq => {
       const sqAttr = sq.getAttribute('data-square');
@@ -1023,29 +1097,13 @@ class OverlayManager {
       await this.updateStreak();
     }
 
-    // If we are within 2 puzzles of the end, start fetching more in the background
-    if (this.currentPuzzleIndex >= this.puzzleQueue.length - 2) {
-        this.showStatus('Solved! Loading more...', 'success');
-        // This is async but we don't await it strictly, we let it run
-        // so the UI doesn't freeze during the celebration animation
-        this.fetchMorePuzzles(1).catch(console.error);
-        // ADJUSTED to 1 since API wants one request at a time
-    }
-    
-    // Auto-advance to next puzzle after delay (only if user didn't manually navigate)
-    // Not in use since processing requests one by one now
-    const shouldAutoAdvance = !this.userManuallyNavigated;
-    if (this.currentPuzzleIndex < this.puzzleQueue.length - 1 && shouldAutoAdvance) {
-      const nextIndex = this.currentPuzzleIndex + 1;
-      setTimeout(() => {
-        // Use the captured value, not the current flag state
-        if (shouldAutoAdvance) {
-          this.userManuallyNavigated = false; // Reset before navigating
-          this.goToPuzzle(nextIndex, true);
-        }
-      }, 1500);
-    }
-    this.userManuallyNavigated = false;
+    // Fetch the next puzzle and advance to it once loaded
+    this.showStatus('Solved! Loading more...', 'success');
+    this.fetchMorePuzzles(1).then(addedCount => {
+      if (addedCount > 0) {
+        this.goToPuzzle(this.currentPuzzleIndex + 1);
+      }
+    }).catch(console.error);
   }
 
   async markPuzzleAsSolved() {
@@ -1077,6 +1135,22 @@ class OverlayManager {
       streak: streak,
       lastActiveDate: today
     });
+  }
+
+  async onSkipPuzzle() {
+    const skipBtn = document.getElementById('bt-skip-btn');
+    if (skipBtn) skipBtn.disabled = true;
+
+    const puzzle = this.puzzleQueue[this.currentPuzzleIndex];
+    if (puzzle) this.skippedPuzzleIds.add(puzzle.id);
+    this.updateSidebar();
+
+    const addedCount = await this.fetchMorePuzzles(1);
+    if (addedCount > 0) {
+      this.goToPuzzle(this.currentPuzzleIndex + 1);
+    } else if (skipBtn) {
+      skipBtn.disabled = false;
+    }
   }
 
   renderVideo() {
