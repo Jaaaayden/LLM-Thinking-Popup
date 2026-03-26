@@ -11,7 +11,7 @@ class OverlayManager {
     this.puzzleSolution = [];
     this.currentMoveIndex = 0;
     this.isPlayerTurn = false;
-    this.isTrainingMode = false;
+    this.isTrainingMode = false; // if lichess api breaks it'll display empty board
     this.audioEnabled = true;
     this.sounds = {};
     this.videoMuted = true;
@@ -821,7 +821,7 @@ class OverlayManager {
         <div class="bt-stat-label">Current</div>
       </div>
       <div class="bt-stat-item">
-        <div class="bt-stat-value">${this.sessionPuzzles.length > 0 ? Math.round(this.sessionPuzzles.reduce((a, b) => a + b, 0) / this.sessionPuzzles.length) : 0}s</div>
+        <div class="bt-stat-value">${this.sessionPuzzles.length > 0 ? Math.round(this.sessionPuzzles.reduce((a, b) => a + b, 0) / this.sessionPuzzles.length / 1000) : 0}s</div>
         <div class="bt-stat-label">Avg Time</div>
       </div>
     `;
