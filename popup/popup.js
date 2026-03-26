@@ -4,11 +4,36 @@ document.addEventListener('DOMContentLoaded', () => {
   const puzzleStatus = document.getElementById('puzzleStatus');
   const resetPuzzleBtn = document.getElementById('resetPuzzleBtn');
   const resetStatsBtn = document.getElementById('resetStatsBtn');
+  const difficultySlider = document.getElementById('difficultySlider');
+  const difficultyLabelEl = document.getElementById('difficultyLabel');
+
+  const DIFFICULTY_LEVELS = ['easiest', 'easier', 'normal', 'harder', 'hardest'];
+  const DIFFICULTY_LABELS = ['Easiest', 'Easier', 'Normal', 'Harder', 'Hardest'];
+  const DIFFICULTY_COLORS = ['#4CAF50', '#8bc34a', '#ffc107', '#ff9800', '#ff6b6b'];
 
   // Validate elements exist
   if (!chessToggle || !videoToggle) {
     console.error('Toggle elements not found!');
     return;
+  }
+
+  // Load difficulty setting
+  chrome.storage.sync.get(['puzzleDifficulty'], (data) => {
+    const idx = DIFFICULTY_LEVELS.indexOf(data.puzzleDifficulty || 'normal');
+    const safeIdx = idx >= 0 ? idx : 2;
+    difficultySlider.value = safeIdx;
+    updateDifficultyLabel(safeIdx);
+  });
+
+  difficultySlider.addEventListener('input', () => {
+    const idx = parseInt(difficultySlider.value, 10);
+    updateDifficultyLabel(idx);
+    chrome.storage.sync.set({ puzzleDifficulty: DIFFICULTY_LEVELS[idx] });
+  });
+
+  function updateDifficultyLabel(idx) {
+    difficultyLabelEl.textContent = DIFFICULTY_LABELS[idx];
+    difficultyLabelEl.style.color = DIFFICULTY_COLORS[idx];
   }
 
   // 1. Load Settings with a Default Fallback

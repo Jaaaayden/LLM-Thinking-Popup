@@ -613,7 +613,9 @@ class OverlayManager {
     
     for (let i = 0; i < count; i++) {
       try {
-        const response = await chrome.runtime.sendMessage({ action: 'FETCH_TRAINING_PUZZLE' });
+        const stored = await chrome.storage.sync.get(['puzzleDifficulty']);
+        const difficulty = stored.puzzleDifficulty || 'normal';
+        const response = await chrome.runtime.sendMessage({ action: 'FETCH_TRAINING_PUZZLE', difficulty });
         
         if (response && response.success) {
           const data = response.data;
@@ -1139,7 +1141,23 @@ class OverlayManager {
 
   async onSkipPuzzle() {
     const skipBtn = document.getElementById('bt-skip-btn');
-    if (skipBtn) skipBtn.disabled = true;
+    if (skipBtn) {
+      skipBtn.disabled = true;
+      // Show countdown to avoid rate limiting
+      const delayMs = 3000 + Math.random() * 2000; // 3-5s
+      const endTime = Date.now() + delayMs;
+      const countdown = setInterval(() => {
+        const remaining = Math.ceil((endTime - Date.now()) / 1000);
+        if (skipBtn && remaining > 0) {
+          skipBtn.innerHTML = `⏳ ${remaining}s`;
+        } else {
+          clearInterval(countdown);
+        }
+      }, 200);
+      await new Promise(resolve => setTimeout(resolve, delayMs));
+      clearInterval(countdown);
+      if (skipBtn) skipBtn.innerHTML = '⏭ Skip';
+    }
 
     const puzzle = this.puzzleQueue[this.currentPuzzleIndex];
     if (puzzle) this.skippedPuzzleIds.add(puzzle.id);
